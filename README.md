@@ -1,72 +1,45 @@
-# Pi Streamer
+# Pi Streamer SDR
 
-Streams audio from a USB sound card to an Icecast MP3 stream on a Raspberry Pi 3B.
-Designed for always-on, unattended, headless operation with remote access via Tailscale.
+RTL-SDR variant of [pi-streamer](https://github.com/ebaikie/pi-streamer). Replaces the physical radio + USB sound card with an RTL-SDR Blog V3 dongle, eliminating the unverifiable audio path problem (USB sound card squeals with or without input).
 
-## Features
+## Hardware
 
-- **USB line-in capture** via ALSA (no PulseAudio, no desktop needed)
-- **Audio EQ & filtering** — highpass, lowpass, speech boost, noise gate
-- **Web UI** for control and monitoring (retro terminal aesthetic)
-- **Always-on** — auto-start on boot, watchdog, crash recovery
-- **Remote access** via Tailscale (installed automatically)
-- **Lightweight** — no Docker, runs native on Pi 3B (1GB RAM)
+- Raspberry Pi 3B
+- Raspberry Pi OS Lite 64-bit (Bookworm)
+- RTL-SDR Blog V3 (USB)
+- Internet connection (for Tailscale and initial setup)
+
+No USB audio card. No physical radio.
 
 ## Architecture
 
 ```
-USB Sound Card → arecord (ALSA) → sox (EQ/gate) → ffmpeg (MP3) → Icecast2
-                                                                     ↓
-                                                            /scanner mount
-                                                         (MP3 stream :8000)
+rtl_fm -f <freq> -M fm -s 22050 -l 0 -g <gain>
+  → sox (noise gate, EQ, speech boost)
+  → ffmpeg (MP3 encode)
+  → Icecast2 (/scanner mount :8000)
 
-Flask Web UI (:5080) — control, monitoring, EQ adjustment
-Tailscale — remote access to both UI and stream
+Flask Web UI (:5080) — frequency, gain, EQ, monitoring
+Tailscale — remote access to UI and stream
 ```
 
-## Requirements
+## Critical requirement: Icecast mount must never drop
 
-- Raspberry Pi 3B (or newer)
-- Raspberry Pi OS Lite 64-bit (Bookworm)
-- USB audio adapter with line-in / microphone input
-- Internet connection (for Tailscale and initial setup)
+Audio is absent ~75% of the time. The Icecast mount must stay up 24/7 regardless.
+
+**How:**
+
+- `rtl_fm` runs with squelch OFF (`-l 0`) — always outputs audio, even if it's just noise floor
+- Sox noise gate silences the noise floor — output is clean digital silence, but the byte stream never stops
+- ffmpeg always receives audio, encodes silence as valid MP3 frames
+- Icecast mount stays up permanently
+- Watchdog only fires on actual process failures, never on silence
+
+**Do not** use `rtl_fm` squelch (`-l` > 0). When squelch is active in rtl_fm, it can stop outputting bytes entirely, which starves ffmpeg, drops the Icecast mount, and triggers a watchdog restart loop.
+
+The sox noise gate threshold effectively becomes the squelch control. Listeners hear silence between transmissions.
 
 ## Installation
-
-### 1. Enable USB boot (one-time, requires SD card)
-
-The Pi 3B doesn't boot from USB by default. This one-time step programs the
-bootloader to allow USB boot. You'll need a micro SD card temporarily.
-
-1. Open **Raspberry Pi Imager**
-2. Flash **Raspberry Pi OS Lite (64-bit, Bookworm)** to a micro SD card
-3. In Imager settings: enable SSH, set username `pi`, set password, configure WiFi
-4. Insert SD card into Pi, power on, SSH in
-5. Enable USB boot mode:
-   ```bash
-   echo program_usb_boot_mode=1 | sudo tee -a /boot/firmware/config.txt
-   sudo reboot
-   ```
-6. After reboot, verify it took:
-   ```bash
-   vcgencmd otp_dump | grep 17:
-   ```
-   Should show `17:3020000a` — USB boot is now permanently enabled.
-7. Shut down the Pi: `sudo shutdown -h now`
-8. Remove the SD card — you won't need it again.
-
-### 2. Flash USB stick
-
-1. Open **Raspberry Pi Imager**
-2. Flash **Raspberry Pi OS Lite (64-bit, Bookworm)** to your USB stick
-3. In Imager settings: enable SSH, set username `pi`, set password, configure WiFi
-4. Plug the USB stick into the Pi (no SD card), power on
-
-A 16GB+ brand-name USB stick is recommended (SanDisk, Samsung, Kingston).
-USB sticks are significantly more durable than SD cards under continuous
-write workloads like logging and stream state persistence.
-
-### 3. Install Pi Streamer
 
 > **Reinstalling? If Tailscale is already running on the Pi**, bring it down first
 > so its DNS does not block package downloads:
@@ -78,60 +51,32 @@ write workloads like logging and stream state persistence.
 
 ```bash
 ssh pi@<pi-ip-address>
-
-# Transfer the tarball (scp, USB, etc), then:
-tar xzf pi-streamer.tar.gz
-cd pi-streamer
+git clone https://github.com/ebaikie/pi-streamer-sdr
+cd pi-streamer-sdr
 sudo bash install.sh
 ```
 
 The installer will:
-1. Install all system packages (icecast2, sox, ffmpeg, alsa-utils, python3-flask)
-2. Install and authenticate Tailscale (follow the link it prints)
-3. Detect your USB audio device
-4. Configure Icecast2 with a random password
-5. Install the application to `/opt/pi-streamer`
-6. Create and enable a systemd service
-7. Auto-start the stream
-8. Print all access URLs
-
-### 3. Access
-
-After installation, the installer prints your URLs. They'll look like:
-
-```
-Web UI:    http://<tailscale-ip>:5080
-Stream:    http://<tailscale-ip>:8000/scanner
-```
-
-## File structure
-
-```
-pi-streamer/
-├── README.md              # This file
-├── install.sh             # One-shot installer (run once as root)
-├── app.py                 # Flask application and pipeline manager
-└── templates/
-    └── index.html         # Web UI
-```
-
-After installation:
-
-```
-/opt/pi-streamer/
-├── app.py                 # Application
-├── templates/
-│   └── index.html         # Web UI
-├── pi-streamer.conf       # Configuration (ALSA device, ports, passwords)
-└── tuning_state.json      # Persisted EQ/filter settings (auto-generated)
-```
+1. Install system packages (icecast2, sox, ffmpeg, rtl-sdr, python3-flask)
+2. Blacklist the DVB kernel module so the RTL-SDR device is accessible
+3. Install and authenticate Tailscale (follow the link it prints)
+4. Detect the RTL-SDR dongle
+5. Configure Icecast2 with a random password
+6. Install the application to `/opt/pi-streamer`
+7. Create and enable a systemd service
+8. Auto-start the stream
+9. Print all access URLs
 
 ## Configuration
 
-Edit `/opt/pi-streamer/pi-streamer.conf`:
+`/opt/pi-streamer/pi-streamer.conf`:
 
 ```ini
-ALSA_DEVICE=hw:1,0
+RTL_FREQUENCY=164.750M
+RTL_MODULATION=fm
+RTL_GAIN=40
+RTL_PPM=0
+RTL_SAMPLE_RATE=22050
 ICECAST_HOST=localhost
 ICECAST_PORT=8000
 ICECAST_SOURCE_PASSWORD=<auto-generated>
@@ -140,103 +85,87 @@ WEB_UI_PORT=5080
 
 After editing: `sudo systemctl restart pi-streamer`
 
-### Finding your ALSA device
-
-```bash
-arecord -l
-```
-
-Look for your USB adapter. If it's card 2 device 0, set `ALSA_DEVICE=hw:2,0`.
-
 ## Web UI
 
-### Audio Settings
-- **Bitrate** — MP3 encoding quality (64/96/128/192 kbps)
+### SDR Controls (new)
+- **Frequency** — in MHz (e.g. `164.750`), restarts pipeline on change
+- **Modulation** — NFM / AM
+- **Gain** — 0–50 dB (0 = auto-gain)
+- **PPM** — frequency correction, set once for your dongle
+- **Presets** — saved frequencies for quick switching
 
-### Audio EQ & Filter
-- **Low Cut** — highpass filter (0–500 Hz). Removes hum and rumble.
-- **High Cut** — lowpass filter (2000–20000 Hz). Removes whine and interference.
-- **Speech Boost** — peaking EQ at 1.5 kHz (0–15 dB). Improves voice clarity.
-- **Noise Gate** — mutes audio below threshold (0=off, 1–10).
+### Audio EQ & Filter (unchanged from pi-streamer)
+- **Bitrate** — 64/96/128/192 kbps
+- **Low Cut** — highpass (0–500 Hz)
+- **High Cut** — lowpass (2000–20000 Hz)
+- **Speech Boost** — peaking EQ at 1.5 kHz (0–15 dB)
+- **Noise Gate** — 0=off, 1–10. **This is the effective squelch.**
 
-For speech/scanner: Low 200 / High 3500 / Boost 6 / Gate 3
+## Defaults for Hawke's Bay scanner monitoring
 
-Settings are saved automatically and persist across reboots.
+```
+Frequency: 164.750 MHz
+Modulation: NFM
+Gain: 40
+PPM: 0
+Low Cut: 200 Hz
+High Cut: 3500 Hz
+Speech Boost: 6 dB
+Noise Gate: 3
+Bitrate: 96 kbps
+```
 
 ## Always-on operation
 
 ### Boot sequence
-
-1. Pi boots → systemd starts `icecast2` service
-2. systemd starts `pi-streamer` service (after icecast2)
+1. Pi boots → systemd starts `icecast2`
+2. systemd starts `pi-streamer` (after icecast2)
 3. App loads saved tuning from `tuning_state.json`
 4. App waits for Icecast to be reachable (up to 30s)
-5. App auto-starts the audio pipeline
+5. App starts pipeline: `rtl_fm | sox | ffmpeg → icecast`
+6. Stream is live. Silence until there's a transmission.
 
 ### Crash recovery
-
-- **Process watchdog** — checks every 1s if pipeline processes are alive
-- **Icecast mount watchdog** — if /scanner mount disappears for 20s, force restart
-- **Fast restart** — 3-second delay, up to 50 attempts
-- **Heartbeat log** — every 5 minutes for uptime verification
-- **Stale state recovery** — START always works even if state is stuck
+- Process watchdog — checks every 1s if rtl_fm, sox, ffmpeg are alive
+- Icecast mount watchdog — if /scanner disappears for 20s, restart
+- Fast restart — 3s delay, up to 50 attempts
+- Heartbeat log — every 5 minutes
 
 ### Service management
-
 ```bash
-sudo systemctl status pi-streamer    # Check status
-sudo systemctl restart pi-streamer   # Restart
-sudo systemctl stop pi-streamer      # Stop
-journalctl -u pi-streamer -f         # Live logs
-journalctl -u pi-streamer | grep Heartbeat  # Check uptime
+sudo systemctl status pi-streamer
+sudo systemctl restart pi-streamer
+journalctl -u pi-streamer -f
 ```
 
 ## Tailscale
 
-Tailscale is installed and authenticated during setup. The Pi joins your
-Tailscale network and is accessible from any device on the same network.
+Tailscale is installed and authenticated during setup.
 
 ```bash
-tailscale status          # Check connection
-tailscale ip -4           # Get Tailscale IP
+tailscale status
+tailscale ip -4
 ```
 
-To access from another device on your Tailscale network:
 - Web UI: `http://<pi-tailscale-ip>:5080`
 - Stream: `http://<pi-tailscale-ip>:8000/scanner`
 
 ## Troubleshooting
 
-**No USB audio device detected:**
-Plug in the adapter and check: `arecord -l`. Update `ALSA_DEVICE` in
-`/opt/pi-streamer/pi-streamer.conf` and restart the service.
+**RTL-SDR not detected:**
+Check `rtl_test -t`. If it says "No supported devices found", the DVB module may not be blacklisted yet — reboot after install.
 
 **Stream shows 404:**
 Icecast may not be running: `sudo systemctl status icecast2`.
-The watchdog should auto-restart the pipeline within 20 seconds.
 
-**"Already running" but no audio:**
-The stale-state detection handles this automatically. Click STOP then START,
-or just wait — the watchdog restarts after 20s of missing Icecast mount.
+**Lots of noise, no voice:**
+Lower noise gate (try 5–8) and adjust high cut (3000–4000 Hz for NFM voice).
 
-**High CPU on Pi 3B:**
-Lower the bitrate to 64kbps. The sox filters are lightweight but ffmpeg
-encoding at high bitrates uses more CPU.
+**Frequency drift / off-frequency:**
+Adjust PPM correction in the Web UI. RTL-SDR Blog V3 is typically 0–2 PPM.
+
+**install.sh fails when Tailscale is already installed:**
+See reinstall note at top of Installation section.
 
 **Tailscale not connected after reboot:**
-Check: `sudo systemctl status tailscaled`. Re-authenticate if needed:
-`sudo tailscale up`.
-
-**install.sh fails or hangs when Tailscale is already installed:**
-Tailscale owns `/etc/resolv.conf` and sets its own DNS (`100.100.100.100`)
-which cannot resolve external hostnames, blocking apt and other downloads.
-Fix: bring Tailscale down before running the installer:
-```bash
-sudo tailscale down
-echo "nameserver 1.1.1.1" | sudo tee /etc/resolv.conf
-sudo bash install.sh
-```
-
-## License
-
-Unlicensed — personal project.
+`sudo systemctl status tailscaled`. Re-authenticate: `sudo tailscale up`.

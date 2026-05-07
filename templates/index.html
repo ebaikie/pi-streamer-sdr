@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pi Streamer</title>
+<title>Pi Streamer SDR</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
   :root {
@@ -20,10 +20,6 @@
   .panel { background:var(--panel); border:1px solid var(--border); border-radius:4px; padding:1rem; margin-bottom:1rem; }
   .panel-title { font-size:.7rem; color:var(--green-dim); text-transform:uppercase; letter-spacing:.15rem; margin-bottom:.75rem; padding-bottom:.25rem; border-bottom:1px solid var(--border); }
 
-  /* Device info */
-  .device-info { text-align:center; padding:.5rem; font-size:.85rem; color:var(--text); }
-  .device-info .device { color:var(--green); font-weight:bold; }
-
   /* Signal meter */
   .meter-row { display:flex; align-items:center; gap:.75rem; padding:.5rem 0; }
   .meter-label { font-size:.65rem; color:var(--green-dim); text-transform:uppercase; min-width:2rem; }
@@ -37,28 +33,42 @@
   .controls { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; }
   .cg { display:flex; flex-direction:column; }
   .cg.wide { grid-column:1/-1; }
+  .cg.third { grid-column:span 1; }
   .cg label { font-size:.65rem; color:var(--green-dim); text-transform:uppercase; letter-spacing:.1rem; margin-bottom:.25rem; }
-  .cg input, .cg select { background:var(--bg); border:1px solid var(--border); color:var(--green); font-family:inherit; font-size:.9rem; padding:.4rem .5rem; border-radius:2px; outline:none; }
+  .cg input, .cg select { background:var(--bg); border:1px solid var(--border); color:var(--green); font-family:inherit; font-size:.9rem; padding:.4rem .5rem; border-radius:2px; outline:none; width:100%; }
   .cg input:focus, .cg select:focus { border-color:var(--green-dim); box-shadow:0 0 5px rgba(51,255,51,.15); }
-  .cg select { cursor:pointer; }
   .cg select option { background:var(--bg); }
+
+  /* Freq display */
+  .freq-display { text-align:center; font-size:1.6rem; font-weight:bold; letter-spacing:.1rem; color:var(--green); text-shadow:0 0 12px rgba(51,255,51,.4); padding:.25rem 0; }
+  .freq-sub { text-align:center; font-size:.65rem; color:var(--green-dim); margin-bottom:.75rem; }
+
+  /* Presets */
+  .preset-row { display:flex; flex-wrap:wrap; gap:.4rem; margin-top:.5rem; }
+  .btn-preset { font-family:inherit; font-size:.7rem; padding:.3rem .6rem; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:2px; cursor:pointer; transition:all .15s; }
+  .btn-preset:hover { border-color:var(--green-dim); color:var(--green); }
+  .btn-preset.active { border-color:var(--green); color:var(--green); background:var(--green-dark); }
+  .btn-preset-del { font-family:inherit; font-size:.6rem; padding:.2rem .4rem; background:transparent; border:1px solid #333; color:#555; border-radius:2px; cursor:pointer; }
+  .btn-preset-del:hover { border-color:var(--red); color:var(--red); }
 
   /* Buttons */
   .btn-row { display:flex; gap:.75rem; margin-top:.5rem; }
   .btn { flex:1; font-family:inherit; font-size:.85rem; font-weight:bold; padding:.6rem 1rem; border:1px solid; border-radius:2px; cursor:pointer; text-transform:uppercase; letter-spacing:.1rem; transition:all .15s; }
-  .btn-go { background:var(--green-dark); border-color:var(--green-dim); color:var(--green); }
+  .btn-go   { background:var(--green-dark); border-color:var(--green-dim); color:var(--green); }
   .btn-go:hover { background:var(--green-dim); color:var(--bg); box-shadow:0 0 10px rgba(51,255,51,.3); }
   .btn-go:disabled { opacity:.3; cursor:not-allowed; box-shadow:none; }
   .btn-stop { background:#330000; border-color:#661a1a; color:var(--red); }
   .btn-stop:hover { background:#661a1a; color:#fff; }
   .btn-stop:disabled { opacity:.3; cursor:not-allowed; }
+  .btn-sm { font-family:inherit; font-size:.7rem; padding:.35rem .6rem; border:1px solid var(--border); background:var(--bg); color:var(--green-dim); border-radius:2px; cursor:pointer; transition:all .15s; white-space:nowrap; }
+  .btn-sm:hover { border-color:var(--green-dim); color:var(--green); }
 
   /* Status */
   .status { font-size:.7rem; padding:.5rem 0; display:flex; align-items:center; gap:.5rem; }
   .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
   .dot.off { background:#333; }
-  .dot.on { background:var(--green); box-shadow:0 0 6px var(--green); }
-  .dot.err { background:var(--red); box-shadow:0 0 6px var(--red); }
+  .dot.on  { background:var(--green); box-shadow:0 0 6px var(--green); }
+  .dot.err { background:var(--red);   box-shadow:0 0 6px var(--red); }
   .err-text { color:var(--red); font-size:.65rem; margin-top:.25rem; }
 
   /* Log */
@@ -71,14 +81,50 @@
 <div class="container">
 
   <div class="header">
-    <h1>&#127925; PI STREAMER</h1>
-    <div class="sub">Line-In &rarr; Icecast MP3 Stream</div>
+    <h1>&#128225; PI STREAMER SDR</h1>
+    <div class="sub">RTL-SDR &rarr; Icecast MP3 Stream</div>
   </div>
 
-  <!-- Device info -->
+  <!-- Frequency display + SDR controls -->
   <div class="panel">
-    <div class="device-info">
-      ALSA Device: <span class="device" id="alsa-dev">detecting...</span>
+    <div class="panel-title">SDR Tuning</div>
+    <div class="freq-display" id="freq-display">164.750 MHz</div>
+    <div class="freq-sub" id="mod-display">NFM &bull; Gain 40 dB &bull; PPM 0</div>
+    <div class="controls" style="margin-top:.75rem;">
+      <div class="cg">
+        <label>Frequency (MHz)</label>
+        <input type="text" id="frequency" value="164.750" placeholder="164.750">
+      </div>
+      <div class="cg">
+        <label>Modulation</label>
+        <select id="modulation">
+          <option value="fm" selected>NFM</option>
+          <option value="am">AM</option>
+          <option value="wbfm">WBFM</option>
+          <option value="usb">USB</option>
+          <option value="lsb">LSB</option>
+        </select>
+      </div>
+      <div class="cg">
+        <label>Gain (<span id="gain-val">40</span> dB)</label>
+        <input type="range" id="gain" min="0" max="50" step="1" value="40" style="accent-color:var(--green);">
+      </div>
+      <div class="cg">
+        <label>PPM Correction</label>
+        <input type="number" id="ppm" value="0" min="-100" max="100" step="1">
+      </div>
+    </div>
+    <div style="display:flex; gap:.5rem; margin-top:.75rem; flex-wrap:wrap;">
+      <button class="btn-sm" onclick="doTune()">&#9654; Apply &amp; Retune</button>
+      <button class="btn-sm" onclick="savePreset()">+ Save Preset</button>
+    </div>
+  </div>
+
+  <!-- Presets -->
+  <div class="panel" id="presets-panel">
+    <div class="panel-title">Presets</div>
+    <div class="preset-row" id="preset-row">
+      <span style="font-size:.65rem; color:#444;">No presets saved.</span>
     </div>
   </div>
 
@@ -104,16 +150,10 @@
         <label>Bitrate (kbps)</label>
         <select id="bitrate">
           <option value="64">64</option>
-          <option value="96">96</option>
-          <option value="128" selected>128</option>
+          <option value="96" selected>96</option>
+          <option value="128">128</option>
           <option value="192">192</option>
         </select>
-      </div>
-      <div class="cg">
-        <label>&nbsp;</label>
-        <div style="font-size:.6rem;color:#555;padding-top:.4rem;">
-          Lower = less bandwidth, higher = better quality
-        </div>
       </div>
     </div>
   </div>
@@ -127,20 +167,20 @@
         <input type="range" id="eq-low-cut" min="0" max="500" step="50" value="200" style="accent-color:var(--green);">
       </div>
       <div class="cg">
-        <label>High Cut (<span id="hc-val">4000</span> Hz)</label>
-        <input type="range" id="eq-high-cut" min="2000" max="20000" step="500" value="4000" style="accent-color:var(--green);">
+        <label>High Cut (<span id="hc-val">3500</span> Hz)</label>
+        <input type="range" id="eq-high-cut" min="2000" max="20000" step="500" value="3500" style="accent-color:var(--green);">
       </div>
       <div class="cg">
-        <label>Speech Boost (<span id="sb-val">0</span> dB)</label>
-        <input type="range" id="eq-speech-boost" min="0" max="15" value="0" style="accent-color:var(--green);">
+        <label>Speech Boost (<span id="sb-val">6</span> dB)</label>
+        <input type="range" id="eq-speech-boost" min="0" max="15" value="6" style="accent-color:var(--green);">
       </div>
       <div class="cg">
-        <label>Noise Gate (<span id="gate-val">2</span>)</label>
-        <input type="range" id="gate-threshold" min="0" max="10" value="2" style="accent-color:var(--green);">
+        <label>Noise Gate (<span id="gate-val">3</span>) &#8592; squelch</label>
+        <input type="range" id="gate-threshold" min="0" max="10" value="3" style="accent-color:var(--green);">
       </div>
       <div class="cg wide" style="font-size:.55rem;color:#555;padding:0 .25rem;">
-        Speech preset: Low 200 / High 3500 / Boost 6 / Gate 3 &bull;
-        Set High Cut to 20000 and Gate to 0 for passthrough
+        Noise gate = effective squelch. Gate 0 = no squelch (silence between transmissions). &bull;
+        HB preset: Low 200 / High 3500 / Boost 6 / Gate 3
       </div>
     </div>
   </div>
@@ -161,7 +201,7 @@
   <!-- Log -->
   <div class="panel">
     <div class="panel-title">Log</div>
-    <div class="log" id="log">Pi Streamer ready.
+    <div class="log" id="log">Pi Streamer SDR ready.
 </div>
   </div>
 
@@ -169,6 +209,7 @@
 
 <script>
 let poll = null;
+let currentPresets = [];
 const logEl = document.getElementById('log');
 
 function log(m) {
@@ -178,21 +219,36 @@ function log(m) {
 }
 
 // Slider labels
-document.getElementById('eq-low-cut').addEventListener('input', function(){
-  document.getElementById('lc-val').textContent = this.value;
-});
-document.getElementById('eq-high-cut').addEventListener('input', function(){
-  document.getElementById('hc-val').textContent = this.value;
-});
-document.getElementById('eq-speech-boost').addEventListener('input', function(){
-  document.getElementById('sb-val').textContent = this.value;
-});
-document.getElementById('gate-threshold').addEventListener('input', function(){
-  document.getElementById('gate-val').textContent = this.value;
-});
+document.getElementById('gain').addEventListener('input', function(){ document.getElementById('gain-val').textContent = this.value; });
+document.getElementById('eq-low-cut').addEventListener('input', function(){ document.getElementById('lc-val').textContent = this.value; });
+document.getElementById('eq-high-cut').addEventListener('input', function(){ document.getElementById('hc-val').textContent = this.value; });
+document.getElementById('eq-speech-boost').addEventListener('input', function(){ document.getElementById('sb-val').textContent = this.value; });
+document.getElementById('gate-threshold').addEventListener('input', function(){ document.getElementById('gate-val').textContent = this.value; });
+
+function freqMhzToHz(val) {
+  const s = String(val).trim().toUpperCase().replace('M','').replace('MHZ','');
+  const n = parseFloat(s);
+  if (isNaN(n)) return null;
+  return n < 1000 ? n + 'M' : String(Math.round(n));
+}
+
+function updateFreqDisplay(freqRaw, mod, gain, ppm) {
+  let display = freqRaw;
+  const s = String(freqRaw).toUpperCase().replace('M','');
+  const n = parseFloat(s);
+  if (!isNaN(n)) display = (n < 1000 ? n : (n/1e6).toFixed(3)) + ' MHz';
+  document.getElementById('freq-display').textContent = display;
+  const modLabel = mod === 'fm' ? 'NFM' : mod.toUpperCase();
+  document.getElementById('mod-display').textContent = `${modLabel} • Gain ${gain} dB • PPM ${ppm}`;
+}
 
 function getSettings() {
+  const freqRaw = freqMhzToHz(document.getElementById('frequency').value) || document.getElementById('frequency').value;
   return {
+    frequency: freqRaw,
+    modulation: document.getElementById('modulation').value,
+    gain: parseInt(document.getElementById('gain').value),
+    ppm: parseInt(document.getElementById('ppm').value),
     bitrate: parseInt(document.getElementById('bitrate').value),
     gate_threshold: parseInt(document.getElementById('gate-threshold').value),
     eq_low_cut: parseInt(document.getElementById('eq-low-cut').value),
@@ -201,56 +257,98 @@ function getSettings() {
   };
 }
 
-async function doStart(){
+async function doStart() {
   const b = document.getElementById('btn-go');
-  b.disabled=true; b.textContent='\u23F3 Starting...';
+  b.disabled=true; b.textContent='⏳ Starting...';
   log('Starting pipeline...');
   try {
-    const r = await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(getSettings())});
+    const s = getSettings();
+    const r = await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)});
     const d = await r.json();
-    if(d.ok){
-      log('Pipeline started');
-      if(d.cmd) log('CMD: '+d.cmd);
-      setRun(true); startPoll();
-    } else {
-      log('ERROR: '+d.error);
-      document.getElementById('etxt').textContent=d.error;
-      b.disabled=false; b.textContent='\u25B6 Start';
-    }
-  } catch(e){
-    log('ERROR: '+e.message);
-    b.disabled=false; b.textContent='\u25B6 Start';
-  }
+    if(d.ok){ log('Pipeline started'); setRun(true); startPoll(); }
+    else { log('ERROR: '+d.error); document.getElementById('etxt').textContent=d.error; b.disabled=false; b.textContent='▶ Start'; }
+  } catch(e){ log('ERROR: '+e.message); b.disabled=false; b.textContent='▶ Start'; }
 }
 
-async function doStop(){
+async function doStop() {
   log('Stopping...'); document.getElementById('btn-st').disabled=true;
   try { await fetch('/api/stop',{method:'POST'}); log('Stopped'); } catch(e){ log('Stop err: '+e.message); }
   setRun(false); stopPoll(); updateMeter(0,0);
 }
 
+async function doTune() {
+  const s = getSettings();
+  log(`Retuning to ${s.frequency} ${s.modulation.toUpperCase()} gain=${s.gain}...`);
+  updateFreqDisplay(s.frequency, s.modulation, s.gain, s.ppm);
+  try {
+    const r = await fetch('/api/tune',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)});
+    const d = await r.json();
+    if(d.ok){ log(d.restarted ? 'Retuned — pipeline restarted.' : 'Settings saved (not running).'); }
+    else { log('Retune error: '+d.error); document.getElementById('etxt').textContent=d.error; }
+  } catch(e){ log('Retune error: '+e.message); }
+}
+
+async function savePreset() {
+  const label = prompt('Preset name (e.g. "HB Police"):');
+  if(!label) return;
+  const s = getSettings();
+  try {
+    const r = await fetch('/api/presets',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({label,frequency:s.frequency,modulation:s.modulation})});
+    const d = await r.json();
+    if(d.ok){ renderPresets(d.presets); log(`Preset saved: ${label}`); }
+  } catch(e){ log('Save preset error: '+e.message); }
+}
+
+async function deletePreset(label) {
+  try {
+    const r = await fetch('/api/presets/'+encodeURIComponent(label),{method:'DELETE'});
+    const d = await r.json();
+    if(d.ok) renderPresets(d.presets);
+  } catch(e){ log('Delete preset error: '+e.message); }
+}
+
+async function tunePreset(freq, mod) {
+  document.getElementById('frequency').value = String(freq).replace('M','');
+  document.getElementById('modulation').value = mod || 'fm';
+  document.getElementById('gain-val').textContent = document.getElementById('gain').value;
+  await doTune();
+}
+
+function renderPresets(presets) {
+  currentPresets = presets || [];
+  const row = document.getElementById('preset-row');
+  if(!currentPresets.length){ row.innerHTML='<span style="font-size:.65rem;color:#444;">No presets saved.</span>'; return; }
+  const activeFreq = document.getElementById('frequency').value;
+  row.innerHTML = currentPresets.map(p => {
+    const freqDisplay = String(p.frequency).replace('M','');
+    const isActive = freqDisplay === activeFreq;
+    return `<span style="display:inline-flex;align-items:center;gap:.2rem;">
+      <button class="btn-preset${isActive?' active':''}" onclick="tunePreset('${p.frequency}','${p.modulation}')" title="${p.frequency} ${p.modulation}">${p.label}</button>
+      <button class="btn-preset-del" onclick="deletePreset('${p.label}')" title="Delete">&#x2715;</button>
+    </span>`;
+  }).join('');
+}
+
 function startPoll(){ stopPoll(); poll=setInterval(pollStatus,500); }
 function stopPoll(){ if(poll){clearInterval(poll);poll=null;} }
+
 async function pollStatus(){
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
     updateMeter(d.signal_level, d.peak_level);
-    if(!d.running){
-      setRun(false); stopPoll();
-      if(d.error){ log('Died: '+d.error); document.getElementById('etxt').textContent=d.error; }
-    }
+    if(!d.running){ setRun(false); stopPoll(); if(d.error){ log('Died: '+d.error); document.getElementById('etxt').textContent=d.error; } }
   } catch(e){}
 }
 
 function setRun(on){
   document.getElementById('btn-go').disabled=on;
-  document.getElementById('btn-go').textContent='\u25B6 Start';
+  document.getElementById('btn-go').textContent='▶ Start';
   document.getElementById('btn-st').disabled=!on;
   const dot=document.getElementById('dot'), txt=document.getElementById('stxt');
   if(on){ dot.className='dot on'; txt.textContent='Streaming'; document.getElementById('etxt').textContent=''; }
-  else { dot.className='dot off'; txt.textContent='Stopped'; }
+  else  { dot.className='dot off'; txt.textContent='Stopped'; }
 }
 
 function updateMeter(lv,pk){
@@ -259,25 +357,24 @@ function updateMeter(lv,pk){
   document.getElementById('mv').textContent=Math.round(lv);
 }
 
-// Init: load current state and sync UI
 async function initState(){
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
-    if(d.alsa_device) document.getElementById('alsa-dev').textContent = d.alsa_device;
-    if(d.tuning){
-      const t = d.tuning;
-      if(t.bitrate) document.getElementById('bitrate').value=t.bitrate;
-      if(t.gate_threshold!==undefined){ document.getElementById('gate-threshold').value=t.gate_threshold; document.getElementById('gate-val').textContent=t.gate_threshold; }
-      if(t.eq_low_cut!==undefined){ document.getElementById('eq-low-cut').value=t.eq_low_cut; document.getElementById('lc-val').textContent=t.eq_low_cut; }
-      if(t.eq_high_cut!==undefined){ document.getElementById('eq-high-cut').value=t.eq_high_cut; document.getElementById('hc-val').textContent=t.eq_high_cut; }
-      if(t.eq_speech_boost!==undefined){ document.getElementById('eq-speech-boost').value=t.eq_speech_boost; document.getElementById('sb-val').textContent=t.eq_speech_boost; }
-    }
-    if(d.running){
-      setRun(true); startPoll();
-      log('Stream already active (auto-started)');
-    }
-  }catch(e){}
+    const t = d.tuning || {};
+    if(t.frequency){ const f=String(t.frequency).replace('M',''); document.getElementById('frequency').value=f; }
+    if(t.modulation) document.getElementById('modulation').value=t.modulation;
+    if(t.gain!==undefined){ document.getElementById('gain').value=t.gain; document.getElementById('gain-val').textContent=t.gain; }
+    if(t.ppm!==undefined) document.getElementById('ppm').value=t.ppm;
+    if(t.bitrate) document.getElementById('bitrate').value=t.bitrate;
+    if(t.gate_threshold!==undefined){ document.getElementById('gate-threshold').value=t.gate_threshold; document.getElementById('gate-val').textContent=t.gate_threshold; }
+    if(t.eq_low_cut!==undefined){ document.getElementById('eq-low-cut').value=t.eq_low_cut; document.getElementById('lc-val').textContent=t.eq_low_cut; }
+    if(t.eq_high_cut!==undefined){ document.getElementById('eq-high-cut').value=t.eq_high_cut; document.getElementById('hc-val').textContent=t.eq_high_cut; }
+    if(t.eq_speech_boost!==undefined){ document.getElementById('eq-speech-boost').value=t.eq_speech_boost; document.getElementById('sb-val').textContent=t.eq_speech_boost; }
+    updateFreqDisplay(t.frequency||'164.750M', t.modulation||'fm', t.gain||40, t.ppm||0);
+    renderPresets(t.presets||[]);
+    if(d.running){ setRun(true); startPoll(); log('Stream already active (auto-started)'); }
+  } catch(e){}
 }
 initState();
 </script>

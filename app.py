@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
-"""Pi Streamer — Line-in to Icecast streaming server.
+"""Pi Streamer SDR — RTL-SDR to Icecast streaming server.
 
-Streams audio from a USB sound card via ALSA to an Icecast MP3 stream.
-Designed for always-on headless operation on Raspberry Pi.
+Pipeline: rtl_fm → sox (EQ/gate) → ffmpeg (MP3) → Icecast
 
-Pipeline: arecord (ALSA) → sox (EQ/gate) → ffmpeg (MP3) → Icecast
-
-Environment variables (from pi-streamer.conf):
-    ALSA_DEVICE              ALSA capture device (default: hw:1,0)
-    ICECAST_HOST             Icecast hostname (default: localhost)
-    ICECAST_PORT             Icecast port (default: 8000)
-    ICECAST_SOURCE_PASSWORD  Icecast source password (default: hackme)
-    WEB_UI_PORT              Web UI port (default: 5080)
+CRITICAL: rtl_fm runs with squelch OFF (-l 0). The sox noise gate is the
+effective squelch. This keeps ffmpeg fed at all times so the Icecast mount
+never drops between transmissions.
 """
 
 import json as jsonlib
@@ -25,152 +19,111 @@ from urllib.request import urlopen
 
 app = Flask(__name__)
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-ALSA_DEVICE = os.environ.get("ALSA_DEVICE", "hw:1,0")
-ICECAST_HOST = os.environ.get("ICECAST_HOST", "localhost")
-ICECAST_PORT = int(os.environ.get("ICECAST_PORT", "8000"))
+RTL_FREQUENCY   = os.environ.get("RTL_FREQUENCY", "164.750M")
+RTL_MODULATION  = os.environ.get("RTL_MODULATION", "fm")
+RTL_GAIN        = os.environ.get("RTL_GAIN", "40")
+RTL_PPM         = os.environ.get("RTL_PPM", "0")
+RTL_SAMPLE_RATE = int(os.environ.get("RTL_SAMPLE_RATE", "22050"))
+ICECAST_HOST    = os.environ.get("ICECAST_HOST", "localhost")
+ICECAST_PORT    = int(os.environ.get("ICECAST_PORT", "8000"))
 ICECAST_SOURCE_PASSWORD = os.environ.get("ICECAST_SOURCE_PASSWORD", "hackme")
-WEB_UI_PORT = int(os.environ.get("WEB_UI_PORT", "5080"))
-INSTALL_DIR = os.path.dirname(os.path.abspath(__file__))
-STATE_FILE = os.path.join(INSTALL_DIR, "tuning_state.json")
+WEB_UI_PORT     = int(os.environ.get("WEB_UI_PORT", "5080"))
+INSTALL_DIR     = os.path.dirname(os.path.abspath(__file__))
+STATE_FILE      = os.path.join(INSTALL_DIR, "tuning_state.json")
 
-# ---------------------------------------------------------------------------
-# State
-# ---------------------------------------------------------------------------
 pipeline_lock = threading.Lock()
 state = {
-    "running": False,
-    "proc": None,
-    "monitor_thread": None,
-    "signal_level": 0.0,
-    "peak_level": 0.0,
-    "error": None,
-    "last_cmd": "",
+    "running": False, "proc": None, "monitor_thread": None,
+    "signal_level": 0.0, "peak_level": 0.0, "error": None, "last_cmd": "",
 }
 
 tuning = {
-    "bitrate": 128,
-    "gate_threshold": 2,     # 0=off, 1-10 noise gate aggressiveness
-    "eq_low_cut": 200,       # Hz — highpass, kill below this
-    "eq_high_cut": 4000,     # Hz — lowpass, kill above this
-    "eq_speech_boost": 0,    # dB — boost speech band (1-2kHz), 0=off
+    "bitrate": 96, "gate_threshold": 3,
+    "eq_low_cut": 200, "eq_high_cut": 3500, "eq_speech_boost": 6,
+    "frequency": RTL_FREQUENCY, "modulation": RTL_MODULATION,
+    "gain": int(RTL_GAIN), "ppm": int(RTL_PPM),
+    "presets": [],
 }
 
-
-# ---------------------------------------------------------------------------
-# Persistence
-# ---------------------------------------------------------------------------
 def save_tuning():
-    """Persist current tuning to disk."""
     try:
         with open(STATE_FILE, "w") as f:
             jsonlib.dump(tuning, f, indent=2)
-        print(f"[STREAM] Saved tuning to {STATE_FILE}", flush=True)
     except Exception as e:
         print(f"[STREAM] Failed to save tuning: {e}", flush=True)
 
-
 def load_tuning():
-    """Load saved tuning from disk if available."""
     try:
         with open(STATE_FILE) as f:
             saved = jsonlib.load(f)
         for k, v in saved.items():
             if k in tuning:
                 tuning[k] = v
-        print(f"[STREAM] Loaded tuning: bitrate={tuning['bitrate']}, "
-              f"low={tuning['eq_low_cut']}, high={tuning['eq_high_cut']}", flush=True)
+        print(f"[STREAM] Loaded tuning: freq={tuning['frequency']} "
+              f"mod={tuning['modulation']} gain={tuning['gain']}", flush=True)
     except FileNotFoundError:
-        print("[STREAM] No saved tuning found, using defaults", flush=True)
+        print("[STREAM] No saved tuning, using defaults", flush=True)
     except Exception as e:
         print(f"[STREAM] Failed to load tuning: {e}", flush=True)
 
-
-# ---------------------------------------------------------------------------
-# Command builders
-# ---------------------------------------------------------------------------
-def build_arecord_args():
-    """Build arecord command for ALSA capture."""
+def build_rtl_fm_args():
+    """squelch always OFF (-l 0) — sox noise gate is the squelch"""
     return [
-        "arecord",
-        "-D", ALSA_DEVICE,
-        "-f", "S16_LE",
-        "-r", "44100",
-        "-c", "1",
-        "-t", "raw",
+        "rtl_fm",
+        "-f", str(tuning.get("frequency", RTL_FREQUENCY)),
+        "-M", str(tuning.get("modulation", RTL_MODULATION)),
+        "-s", str(RTL_SAMPLE_RATE),
+        "-l", "0",
+        "-g", str(tuning.get("gain", int(RTL_GAIN))),
+        "-p", str(tuning.get("ppm", int(RTL_PPM))),
     ]
 
-
 def build_sox_filter_args():
-    """Build sox filter chain: highpass → lowpass → speech boost → noise gate."""
-    thresh = int(tuning.get("gate_threshold", 2))
+    thresh = int(tuning.get("gate_threshold", 3))
     low_cut = int(tuning.get("eq_low_cut", 200))
-    high_cut = int(tuning.get("eq_high_cut", 4000))
-    speech_boost = int(tuning.get("eq_speech_boost", 0))
-
+    high_cut = int(tuning.get("eq_high_cut", 3500))
+    speech_boost = int(tuning.get("eq_speech_boost", 6))
+    sr = RTL_SAMPLE_RATE
     effects = []
-
     if low_cut > 0:
         effects += ["highpass", str(low_cut)]
-
     if 0 < high_cut < 20000:
         effects += ["lowpass", str(high_cut)]
-
     if speech_boost > 0:
         effects += ["equalizer", "1500", "1.5q", f"+{speech_boost}"]
-
     if thresh > 0:
         knee = int(-70 + (thresh - 1) * 5.5)
         above = min(knee + 15, -5)
         tf = f"6:-inf,-inf,{knee},-inf,{above},{above},0,0"
         effects += ["compand", "0.01,0.3", tf, "0"]
-
     if not effects:
         effects = ["vol", "1.0"]
-
     return [
         "sox",
-        "-t", "raw", "-r", "44100", "-e", "signed-integer", "-b", "16", "-c", "1", "-",
-        "-t", "raw", "-r", "44100", "-e", "signed-integer", "-b", "16", "-c", "1", "-",
+        "-t", "raw", "-r", str(sr), "-e", "signed-integer", "-b", "16", "-c", "1", "-",
+        "-t", "raw", "-r", str(sr), "-e", "signed-integer", "-b", "16", "-c", "1", "-",
         *effects,
     ]
 
-
 def build_ffmpeg_args():
-    """Build ffmpeg MP3 encoder → Icecast."""
     icecast_url = (f"icecast://source:{ICECAST_SOURCE_PASSWORD}"
                    f"@{ICECAST_HOST}:{ICECAST_PORT}/scanner")
     return [
-        "ffmpeg",
-        "-hide_banner",
-        "-f", "s16le",
-        "-ar", "44100",
-        "-ac", "1",
-        "-i", "pipe:0",
-        "-codec:a", "libmp3lame",
-        "-b:a", f"{int(tuning['bitrate'])}k",
-        "-f", "mp3",
-        "-content_type", "audio/mpeg",
+        "ffmpeg", "-hide_banner",
+        "-f", "s16le", "-ar", str(RTL_SAMPLE_RATE), "-ac", "1", "-i", "pipe:0",
+        "-codec:a", "libmp3lame", "-b:a", f"{int(tuning['bitrate'])}k",
+        "-f", "mp3", "-content_type", "audio/mpeg",
         icecast_url,
     ]
 
-
 def build_shell_command():
-    """Build full pipeline: arecord | sox | ffmpeg."""
-    arecord = " ".join(build_arecord_args())
+    rtl = " ".join(build_rtl_fm_args())
     sox = " ".join(build_sox_filter_args())
-    ffmpeg = " ".join(build_ffmpeg_args())
-    kill = "pkill -9 arecord; pkill -9 sox; pkill -9 ffmpeg; sleep 1"
-    return f"{kill}; {arecord} | {sox} | {ffmpeg}"
+    ffm = " ".join(build_ffmpeg_args())
+    kill = "pkill -9 rtl_fm; pkill -9 sox; pkill -9 ffmpeg; sleep 1"
+    return f"{kill}; {rtl} | {sox} | {ffm}"
 
-
-# ---------------------------------------------------------------------------
-# Icecast health check
-# ---------------------------------------------------------------------------
 def poll_icecast_stats():
-    """Check if /scanner mount is active on Icecast."""
     try:
         url = f"http://{ICECAST_HOST}:{ICECAST_PORT}/status-json.xsl"
         with urlopen(url, timeout=2) as resp:
@@ -186,20 +139,9 @@ def poll_icecast_stats():
     except Exception:
         return 0.0
 
-
-# ---------------------------------------------------------------------------
-# Monitor / Watchdog
-# ---------------------------------------------------------------------------
 def monitor_loop():
-    """Background watchdog: monitors process health AND Icecast mount.
-
-    Restarts pipeline if:
-      - Pipeline process exits
-      - Icecast /scanner mount disappears for 20+ seconds
-    """
     decay = 0.9
     restart_count = 0
-    max_restarts = 50
     mount_missing_count = 0
     MOUNT_MISSING_THRESHOLD = 20
     heartbeat_counter = 0
@@ -207,15 +149,10 @@ def monitor_loop():
     while state["running"]:
         time.sleep(1)
         heartbeat_counter += 1
-
         if heartbeat_counter % 300 == 0:
-            print(f"[STREAM] Heartbeat: running, restarts={restart_count}",
-                  flush=True)
+            print(f"[STREAM] Heartbeat: running, restarts={restart_count}", flush=True)
 
-        # Check 1: Process died
         proc_dead = state["proc"] and state["proc"].poll() is not None
-
-        # Check 2: Icecast mount missing
         level = poll_icecast_stats()
         if level > 0:
             mount_missing_count = 0
@@ -227,20 +164,17 @@ def monitor_loop():
         state["signal_level"] = round(level, 1)
         state["peak_level"] = max(level, state["peak_level"] * decay)
 
-        # Decide if restart needed
         needs_restart = False
         reason = ""
-
         if proc_dead:
             needs_restart = True
             err = ""
             try:
                 err = (state["proc"].stderr.read().decode(errors="replace")[:200]
                        if state["proc"].stderr else "")
-            except:
+            except Exception:
                 pass
             reason = f"Process exited: {err}" if err else "Process exited"
-
         elif mount_missing_count >= MOUNT_MISSING_THRESHOLD:
             needs_restart = True
             reason = f"Icecast mount missing for {mount_missing_count}s"
@@ -248,69 +182,55 @@ def monitor_loop():
         if not needs_restart:
             continue
 
-        # Restart
         restart_count += 1
         state["signal_level"] = 0
         state["peak_level"] = 0
         print(f"[STREAM] {reason}", flush=True)
 
-        if restart_count > max_restarts:
+        if restart_count > 50:
             state["running"] = False
-            state["error"] = f"Gave up after {max_restarts} restarts"
-            print("[STREAM] Max restarts reached, giving up", flush=True)
+            state["error"] = f"Gave up after 50 restarts"
             return
 
-        print(f"[STREAM] Auto-restart {restart_count}/{max_restarts} in 3s...",
-              flush=True)
+        print(f"[STREAM] Auto-restart {restart_count}/50 in 3s...", flush=True)
         state["error"] = f"Restarting ({restart_count})..."
         state["running"] = False
         time.sleep(3)
-
         result = start_pipeline()
         if result.get("ok"):
             print("[STREAM] Auto-restart successful", flush=True)
             mount_missing_count = 0
             return
         else:
-            print(f"[STREAM] Auto-restart failed: {result.get('error')}",
-                  flush=True)
+            print(f"[STREAM] Auto-restart failed: {result.get('error')}", flush=True)
             state["error"] = result.get("error")
             state["running"] = True
             mount_missing_count = 0
             time.sleep(5)
-            continue
 
     state["signal_level"] = 0
     state["peak_level"] = 0
 
-
-# ---------------------------------------------------------------------------
-# Kill / Start / Stop
-# ---------------------------------------------------------------------------
 def kill_existing():
-    """Kill all pipeline processes."""
-    subprocess.run(["pkill", "-9", "arecord"], capture_output=True)
-    subprocess.run(["pkill", "-9", "sox"], capture_output=True)
+    subprocess.run(["pkill", "-9", "rtl_fm"], capture_output=True)
+    subprocess.run(["pkill", "-9", "sox"],    capture_output=True)
     subprocess.run(["pkill", "-9", "ffmpeg"], capture_output=True)
     time.sleep(1)
 
-
 def start_pipeline():
-    """Start the audio pipeline."""
     with pipeline_lock:
         if state["running"]:
             icecast_ok = poll_icecast_stats() > 0
             proc_alive = state["proc"] and state["proc"].poll() is None
             if icecast_ok and proc_alive:
                 return {"ok": False, "error": "Already running"}
-            print("[STREAM] Stale state detected, forcing cleanup...",
-                  flush=True)
+            print("[STREAM] Stale state, forcing cleanup...", flush=True)
             state["running"] = False
             if state["proc"]:
                 try:
                     state["proc"].kill()
                     state["proc"].wait(timeout=3)
-                except:
+                except Exception:
                     pass
 
         state["error"] = None
@@ -323,41 +243,32 @@ def start_pipeline():
         print(f"[STREAM] Command: {shell_cmd}", flush=True)
 
         try:
-            proc = subprocess.Popen(
-                shell_cmd,
-                shell=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
+            proc = subprocess.Popen(shell_cmd, shell=True,
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE)
             time.sleep(2)
-
             if proc.poll() is not None:
                 err = proc.stderr.read().decode(errors="replace")
                 return {"ok": False, "error": f"Pipeline exited: {err}"}
 
             state["proc"] = proc
             state["running"] = True
-
             t = threading.Thread(target=monitor_loop, daemon=True)
             t.start()
             state["monitor_thread"] = t
-
             return {"ok": True, "cmd": shell_cmd}
-
         except Exception as e:
             kill_existing()
             return {"ok": False, "error": str(e)}
 
-
 def stop_pipeline():
-    """Force-stop everything regardless of current state."""
     with pipeline_lock:
         state["running"] = False
         if state["proc"]:
             try:
                 state["proc"].kill()
                 state["proc"].wait(timeout=3)
-            except:
+            except Exception:
                 pass
         kill_existing()
         state["proc"] = None
@@ -367,32 +278,73 @@ def stop_pipeline():
         state["error"] = None
         return {"ok": True}
 
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 @app.route("/")
 def index():
     return render_template("index.html")
-
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
     data = request.get_json(silent=True) or {}
     for key in ("bitrate", "gate_threshold", "eq_low_cut", "eq_high_cut",
-                "eq_speech_boost"):
+                "eq_speech_boost", "gain", "ppm"):
         if key in data:
             tuning[key] = int(data[key])
+    for key in ("frequency", "modulation"):
+        if key in data:
+            tuning[key] = str(data[key]).strip()
     result = start_pipeline()
     if result.get("ok"):
         save_tuning()
     return jsonify(result)
 
-
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
     return jsonify(stop_pipeline())
 
+@app.route("/api/tune", methods=["POST"])
+def api_tune():
+    """Retune without a full stop/start from the UI — just update and restart."""
+    data = request.get_json(silent=True) or {}
+    was_running = state["running"]
+    for key in ("bitrate", "gate_threshold", "eq_low_cut", "eq_high_cut",
+                "eq_speech_boost", "gain", "ppm"):
+        if key in data:
+            tuning[key] = int(data[key])
+    for key in ("frequency", "modulation"):
+        if key in data:
+            tuning[key] = str(data[key]).strip()
+    save_tuning()
+    if not was_running:
+        return jsonify({"ok": True, "restarted": False})
+    stop_pipeline()
+    time.sleep(0.5)
+    result = start_pipeline()
+    result["restarted"] = True
+    return jsonify(result)
+
+@app.route("/api/presets", methods=["GET"])
+def api_presets_get():
+    return jsonify(tuning.get("presets", []))
+
+@app.route("/api/presets", methods=["POST"])
+def api_presets_save():
+    data = request.get_json(silent=True) or {}
+    label = str(data.get("label", "")).strip()
+    freq  = str(data.get("frequency", tuning.get("frequency", ""))).strip()
+    mod   = str(data.get("modulation", tuning.get("modulation", "fm"))).strip()
+    if not label or not freq:
+        return jsonify({"ok": False, "error": "label and frequency required"}), 400
+    presets = [p for p in tuning.get("presets", []) if p.get("label") != label]
+    presets.append({"label": label, "frequency": freq, "modulation": mod})
+    tuning["presets"] = presets
+    save_tuning()
+    return jsonify({"ok": True, "presets": presets})
+
+@app.route("/api/presets/<label>", methods=["DELETE"])
+def api_presets_delete(label):
+    tuning["presets"] = [p for p in tuning.get("presets", []) if p.get("label") != label]
+    save_tuning()
+    return jsonify({"ok": True, "presets": tuning["presets"]})
 
 @app.route("/api/status")
 def api_status():
@@ -403,45 +355,33 @@ def api_status():
         "error": state["error"],
         "tuning": tuning,
         "last_cmd": state["last_cmd"],
-        "alsa_device": ALSA_DEVICE,
     })
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    print(f"[STREAM] Pi Streamer starting", flush=True)
-    print(f"[STREAM] ALSA device: {ALSA_DEVICE}", flush=True)
+    print(f"[STREAM] Pi Streamer SDR starting", flush=True)
     print(f"[STREAM] Icecast: {ICECAST_HOST}:{ICECAST_PORT}", flush=True)
     print(f"[STREAM] Web UI: 0.0.0.0:{WEB_UI_PORT}", flush=True)
-
     load_tuning()
+    print(f"[STREAM] Frequency: {tuning['frequency']} {tuning['modulation'].upper()} "
+          f"gain={tuning['gain']} ppm={tuning['ppm']}", flush=True)
 
     def auto_start():
-        """Wait for Icecast, then auto-start pipeline."""
         for attempt in range(15):
             try:
-                with urlopen(f"http://{ICECAST_HOST}:{ICECAST_PORT}/",
-                             timeout=2):
+                with urlopen(f"http://{ICECAST_HOST}:{ICECAST_PORT}/", timeout=2):
                     break
             except Exception:
-                print(f"[STREAM] Waiting for Icecast... ({attempt+1}/15)",
-                      flush=True)
+                print(f"[STREAM] Waiting for Icecast... ({attempt+1}/15)", flush=True)
                 time.sleep(2)
         else:
-            print("[STREAM] WARNING: Icecast not reachable, starting anyway",
-                  flush=True)
-
+            print("[STREAM] WARNING: Icecast not reachable, starting anyway", flush=True)
         time.sleep(1)
-        print(f"[STREAM] Auto-starting pipeline...", flush=True)
+        print("[STREAM] Auto-starting pipeline...", flush=True)
         result = start_pipeline()
         if result.get("ok"):
             print("[STREAM] Auto-start successful", flush=True)
         else:
-            print(f"[STREAM] Auto-start failed: {result.get('error')}",
-                  flush=True)
+            print(f"[STREAM] Auto-start failed: {result.get('error')}", flush=True)
 
     threading.Thread(target=auto_start, daemon=True).start()
-
     app.run(host="0.0.0.0", port=WEB_UI_PORT, debug=False)

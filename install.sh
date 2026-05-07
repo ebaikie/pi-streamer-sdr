@@ -1,32 +1,31 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Pi Streamer — One-shot installer for Raspberry Pi 3B
+# Pi Streamer SDR — One-shot installer for Raspberry Pi 3B
 #
-# Streams audio from a USB sound card line-in to an Icecast MP3 stream.
-# Designed for always-on, headless, unattended operation.
+# Streams demodulated FM/AM audio from an RTL-SDR Blog V3 to Icecast.
+# No physical radio. No USB sound card.
 #
 # Usage:
 #   sudo bash install.sh
 #
 # Prerequisites:
 #   - Raspberry Pi OS Lite (64-bit, Bookworm) — fresh install
-#   - USB audio adapter plugged in
+#   - RTL-SDR Blog V3 dongle plugged in
 #   - Internet connection
 #   - SSH access
+#
+# Reinstalling with Tailscale already running?
+#   sudo tailscale down
+#   echo "nameserver 1.1.1.1" | sudo tee /etc/resolv.conf
+#   sudo bash install.sh
 # =============================================================================
 set -euo pipefail
 
-# --- Colors ---
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
+info() { echo -e "${GREEN}[INFO]${NC} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
-info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
-err()   { echo -e "${RED}[ERROR]${NC} $*"; }
-
-# --- Root check ---
 if [[ $EUID -ne 0 ]]; then
     err "Run as root: sudo bash install.sh"
     exit 1
@@ -38,8 +37,8 @@ SERVICE_NAME="pi-streamer"
 
 echo ""
 echo "============================================"
-echo "  Pi Streamer Installer"
-echo "  Line-In → Icecast MP3 Streaming"
+echo "  Pi Streamer SDR Installer"
+echo "  RTL-SDR → Icecast MP3 Streaming"
 echo "============================================"
 echo ""
 
@@ -49,26 +48,39 @@ echo ""
 info "Updating package lists..."
 apt-get update -qq
 
-info "Installing dependencies (this takes a few minutes on Pi 3B)..."
-
-# Pre-answer icecast2 configuration dialogs to prevent blocking
+info "Installing dependencies..."
 echo "icecast2 icecast2/icecast-setup boolean true" | debconf-set-selections
 
 apt-get install -y \
     icecast2 \
     sox \
     ffmpeg \
-    alsa-utils \
+    rtl-sdr \
     python3 \
     python3-flask \
-    python3-venv \
     curl \
     jq
 
 info "Packages installed."
 
 # =============================================================================
-# 2. Tailscale
+# 2. Blacklist DVB kernel module
+#    The default dvb_usb_rtl28xxu driver claims the RTL-SDR device before
+#    rtl_fm can open it. Must blacklist it and reload.
+# =============================================================================
+BLACKLIST_FILE="/etc/modprobe.d/blacklist-rtlsdr.conf"
+if [[ ! -f "$BLACKLIST_FILE" ]]; then
+    info "Blacklisting DVB kernel module..."
+    echo 'blacklist dvb_usb_rtl28xxu' > "$BLACKLIST_FILE"
+    # Unload if currently loaded
+    modprobe -r dvb_usb_rtl28xxu 2>/dev/null || true
+    info "DVB module blacklisted."
+else
+    info "DVB module already blacklisted."
+fi
+
+# =============================================================================
+# 3. Tailscale
 # =============================================================================
 if ! command -v tailscale &>/dev/null; then
     info "Installing Tailscale..."
@@ -78,10 +90,8 @@ else
     info "Tailscale already installed."
 fi
 
-# Enable and start tailscaled
 systemctl enable --now tailscaled 2>/dev/null || true
 
-# Check if already authenticated
 if ! tailscale status &>/dev/null; then
     echo ""
     echo "============================================"
@@ -99,40 +109,30 @@ TS_NAME=$(tailscale status --self --json 2>/dev/null | jq -r '.Self.DNSName // "
 info "Tailscale connected: ${TS_IP} (${TS_NAME})"
 
 # =============================================================================
-# 3. Detect USB audio device
+# 4. Detect RTL-SDR device
 # =============================================================================
-info "Detecting USB audio device..."
-USB_CARD=""
-while IFS= read -r line; do
-    if echo "$line" | grep -qi "usb"; then
-        USB_CARD=$(echo "$line" | awk -F'[ :]' '{print $2}')
-        USB_NAME=$(echo "$line" | sed 's/.*\[//;s/\].*//')
-        break
-    fi
-done < <(arecord -l 2>/dev/null || true)
+info "Detecting RTL-SDR device..."
+RTL_DEVICE_FOUND=0
 
-if [[ -z "$USB_CARD" ]]; then
-    warn "No USB audio device detected!"
-    warn "Plug in your USB sound card and re-run, or set ALSA_DEVICE manually"
-    warn "in ${INSTALL_DIR}/pi-streamer.conf after installation."
-    USB_CARD="1"
-    USB_NAME="not detected"
+if rtl_test -t 2>&1 | grep -qi "found.*rtl\|rtl.*found\|blog\|r820"; then
+    RTL_DEVICE_FOUND=1
+    RTL_DEVICE_INFO=$(rtl_test -t 2>&1 | grep -i "found\|blog\|r820" | head -1 || echo "RTL-SDR detected")
+    info "RTL-SDR: ${RTL_DEVICE_INFO}"
+else
+    warn "RTL-SDR not detected — is the dongle plugged in?"
+    warn "If you just blacklisted the DVB module, a reboot may be needed."
+    warn "Continuing install. Set frequency in ${INSTALL_DIR}/pi-streamer.conf after reboot."
 fi
 
-ALSA_DEVICE="hw:${USB_CARD},0"
-info "USB audio: card ${USB_CARD} [${USB_NAME}] → ${ALSA_DEVICE}"
-
 # =============================================================================
-# 4. Configure Icecast
+# 5. Configure Icecast
 # =============================================================================
 info "Configuring Icecast..."
-
-# Generate a random password
 ICECAST_PW=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
 
 cat > /etc/icecast2/icecast.xml << ICEXML
 <icecast>
-    <location>Pi Streamer</location>
+    <location>Pi Streamer SDR</location>
     <admin>admin@localhost</admin>
     <limits>
         <clients>20</clients>
@@ -177,26 +177,27 @@ cat > /etc/icecast2/icecast.xml << ICEXML
 </icecast>
 ICEXML
 
-# Enable Icecast to start on boot
 sed -i 's/ENABLE=false/ENABLE=true/' /etc/default/icecast2 2>/dev/null || true
 systemctl enable icecast2
 systemctl restart icecast2
-
 info "Icecast configured (password: ${ICECAST_PW})"
 
 # =============================================================================
-# 5. Install application
+# 6. Install application
 # =============================================================================
-info "Installing Pi Streamer to ${INSTALL_DIR}..."
+info "Installing Pi Streamer SDR to ${INSTALL_DIR}..."
 mkdir -p "${INSTALL_DIR}/templates"
 
-# --- Config file ---
 cat > "${INSTALL_DIR}/pi-streamer.conf" << CONF
-# Pi Streamer Configuration
+# Pi Streamer SDR Configuration
 # Edit and restart: sudo systemctl restart pi-streamer
 
-# ALSA capture device (find with: arecord -l)
-ALSA_DEVICE=${ALSA_DEVICE}
+# RTL-SDR settings
+RTL_FREQUENCY=164.750M
+RTL_MODULATION=fm
+RTL_GAIN=40
+RTL_PPM=0
+RTL_SAMPLE_RATE=22050
 
 # Icecast connection
 ICECAST_HOST=localhost
@@ -207,23 +208,21 @@ ICECAST_SOURCE_PASSWORD=${ICECAST_PW}
 WEB_UI_PORT=5080
 CONF
 
-# --- App ---
 cp "$(dirname "$0")/app.py" "${INSTALL_DIR}/app.py"
 cp "$(dirname "$0")/templates/index.html" "${INSTALL_DIR}/templates/index.html"
 
 chown -R root:root "${INSTALL_DIR}"
 chmod 644 "${INSTALL_DIR}/pi-streamer.conf"
-
 info "Application installed."
 
 # =============================================================================
-# 6. Systemd service
+# 7. Systemd service
 # =============================================================================
 info "Creating systemd service..."
 
 cat > "/etc/systemd/system/${SERVICE_NAME}.service" << UNIT
 [Unit]
-Description=Pi Streamer — Line-In to Icecast
+Description=Pi Streamer SDR — RTL-SDR to Icecast
 After=network.target icecast2.service
 Wants=icecast2.service
 
@@ -238,7 +237,6 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=pi-streamer
 
-# Hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=${INSTALL_DIR}
@@ -251,18 +249,21 @@ UNIT
 systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}"
 systemctl restart "${SERVICE_NAME}"
-
 info "Service installed and started."
 
 # =============================================================================
-# 7. Summary
+# 8. Summary
 # =============================================================================
 echo ""
 echo "============================================"
 echo "  INSTALLATION COMPLETE"
 echo "============================================"
 echo ""
-echo "  Audio device:  ${ALSA_DEVICE} [${USB_NAME}]"
+if [[ $RTL_DEVICE_FOUND -eq 1 ]]; then
+    echo "  RTL-SDR:   detected"
+else
+    echo "  RTL-SDR:   NOT detected — reboot may be needed"
+fi
 echo ""
 echo "  Web UI:"
 echo "    Local:     http://localhost:5080"
@@ -276,15 +277,15 @@ echo "    DNS:       http://${TS_NAME}:8000/scanner"
 echo ""
 echo "  Icecast admin:"
 echo "    URL:       http://localhost:8000/admin/"
-echo "    User:      admin"
 echo "    Password:  ${ICECAST_PW}"
 echo ""
-echo "  Config file:  ${INSTALL_DIR}/pi-streamer.conf"
-echo "  Logs:         journalctl -u pi-streamer -f"
+echo "  Config:  ${INSTALL_DIR}/pi-streamer.conf"
+echo "  Logs:    journalctl -u pi-streamer -f"
 echo ""
-echo "  Commands:"
-echo "    sudo systemctl restart pi-streamer"
-echo "    sudo systemctl stop pi-streamer"
-echo "    sudo systemctl status pi-streamer"
-echo ""
+if [[ $RTL_DEVICE_FOUND -eq 0 ]]; then
+    echo "  ACTION REQUIRED: Reboot the Pi before starting."
+    echo "  The DVB kernel module was blacklisted — needs a reboot"
+    echo "  to release the RTL-SDR device."
+    echo ""
+fi
 echo "============================================"
