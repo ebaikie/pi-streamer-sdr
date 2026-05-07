@@ -41,26 +41,39 @@ The sox noise gate threshold effectively becomes the squelch control. Listeners 
 
 ## Installation
 
-> **Reinstalling? If Tailscale is already running on the Pi**, bring it down first
-> so its DNS does not block package downloads:
+> **Do not connect the RTL-SDR dongle before running the installer.**
+> The installer blacklists the DVB kernel module first. If you plug the dongle
+> in *after* the install, the DVB driver never loads and `rtl_fm` can open
+> the device immediately — no reboot needed.
+> If you connect the dongle before installing, the DVB driver will claim it,
+> and you'll need to reboot after install before `rtl_fm` can use it.
+
+> **Reinstalling with Tailscale already running?** Bring it down first:
 > ```bash
 > sudo tailscale down
 > echo "nameserver 1.1.1.1" | sudo tee /etc/resolv.conf
 > ```
-> Then proceed with install as normal.
 
 ```bash
+# 1. Run installer (no SDR connected yet)
 ssh pi@<pi-ip-address>
 git clone https://github.com/ebaikie/pi-streamer-sdr
 cd pi-streamer-sdr
 sudo bash install.sh
+
+# 2. Plug in the RTL-SDR dongle
+# 3. Verify it's detected
+rtl_test -t
+
+# 4. Start the stream
+sudo systemctl start pi-streamer
 ```
 
 The installer will:
 1. Install system packages (icecast2, sox, ffmpeg, rtl-sdr, python3-flask)
 2. Blacklist the DVB kernel module so the RTL-SDR device is accessible
 3. Install and authenticate Tailscale (follow the link it prints)
-4. Detect the RTL-SDR dongle
+4. Detect the RTL-SDR dongle (warns if not found — expected at this stage)
 5. Configure Icecast2 with a random password
 6. Install the application to `/opt/pi-streamer`
 7. Create and enable a systemd service
