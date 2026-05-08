@@ -221,9 +221,8 @@ def kill_existing():
 def start_pipeline():
     with pipeline_lock:
         if state["running"]:
-            icecast_ok = poll_icecast_stats() > 0
             proc_alive = state["proc"] and state["proc"].poll() is None
-            if icecast_ok and proc_alive:
+            if proc_alive:
                 return {"ok": False, "error": "Already running"}
             print("[STREAM] Stale state, forcing cleanup...", flush=True)
             state["running"] = False
