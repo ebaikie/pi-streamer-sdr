@@ -95,13 +95,13 @@ def build_sox_filter_args():
         effects += ["lowpass", str(high_cut)]
     if speech_boost > 0:
         effects += ["equalizer", "1500", "1.5q", f"+{speech_boost}"]
+    if vol_boost != 0:
+        effects += ["gain", str(vol_boost)]
     if thresh > 0:
         knee = int(-70 + (thresh - 1) * 5.5)
         above = min(knee + 15, -5)
         tf = f"6:-inf,-inf,{knee},-inf,{above},{above},0,0"
         effects += ["compand", "0.01,0.3", tf, "0"]
-    if vol_boost != 0:
-        effects += ["gain", str(vol_boost)]
     if not effects:
         effects = ["vol", "1.0"]
     return [
