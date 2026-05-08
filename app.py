@@ -85,10 +85,12 @@ def build_sox_filter_args():
     high_cut = int(tuning.get("eq_high_cut", 3500))
     speech_boost = int(tuning.get("eq_speech_boost", 6))
     sr = RTL_SAMPLE_RATE
+    nyquist = sr // 2 - 100
+    high_cut = min(high_cut, nyquist)
     effects = []
     if low_cut > 0:
         effects += ["highpass", str(low_cut)]
-    if 0 < high_cut < 20000:
+    if 0 < high_cut < nyquist + 100:
         effects += ["lowpass", str(high_cut)]
     if speech_boost > 0:
         effects += ["equalizer", "1500", "1.5q", f"+{speech_boost}"]
