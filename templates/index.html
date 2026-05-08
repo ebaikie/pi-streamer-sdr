@@ -178,6 +178,10 @@
         <label>Noise Gate (<span id="gate-val">3</span>) &#8592; squelch</label>
         <input type="range" id="gate-threshold" min="0" max="10" value="3" style="accent-color:var(--green);">
       </div>
+      <div class="cg">
+        <label>Vol Boost (<span id="vb-val">0</span> dB)</label>
+        <input type="range" id="vol-boost" min="-10" max="20" step="1" value="0" style="accent-color:var(--green);">
+      </div>
       <div class="cg wide" style="font-size:.55rem;color:#555;padding:0 .25rem;">
         Noise gate = effective squelch. Gate 0 = no squelch (silence between transmissions). &bull;
         HB preset: Low 200 / High 3500 / Boost 6 / Gate 3
@@ -224,6 +228,7 @@ document.getElementById('eq-low-cut').addEventListener('input', function(){ docu
 document.getElementById('eq-high-cut').addEventListener('input', function(){ document.getElementById('hc-val').textContent = this.value; });
 document.getElementById('eq-speech-boost').addEventListener('input', function(){ document.getElementById('sb-val').textContent = this.value; });
 document.getElementById('gate-threshold').addEventListener('input', function(){ document.getElementById('gate-val').textContent = this.value; });
+document.getElementById('vol-boost').addEventListener('input', function(){ document.getElementById('vb-val').textContent = this.value; });
 
 function freqMhzToHz(val) {
   const s = String(val).trim().toUpperCase().replace('M','').replace('MHZ','');
@@ -251,6 +256,7 @@ function getSettings() {
     ppm: parseInt(document.getElementById('ppm').value),
     bitrate: parseInt(document.getElementById('bitrate').value),
     gate_threshold: parseInt(document.getElementById('gate-threshold').value),
+    vol_boost: parseInt(document.getElementById('vol-boost').value),
     eq_low_cut: parseInt(document.getElementById('eq-low-cut').value),
     eq_high_cut: parseInt(document.getElementById('eq-high-cut').value),
     eq_speech_boost: parseInt(document.getElementById('eq-speech-boost').value),
@@ -368,6 +374,7 @@ async function initState(){
     if(t.ppm!==undefined) document.getElementById('ppm').value=t.ppm;
     if(t.bitrate) document.getElementById('bitrate').value=t.bitrate;
     if(t.gate_threshold!==undefined){ document.getElementById('gate-threshold').value=t.gate_threshold; document.getElementById('gate-val').textContent=t.gate_threshold; }
+    if(t.vol_boost!==undefined){ document.getElementById('vol-boost').value=t.vol_boost; document.getElementById('vb-val').textContent=t.vol_boost; }
     if(t.eq_low_cut!==undefined){ document.getElementById('eq-low-cut').value=t.eq_low_cut; document.getElementById('lc-val').textContent=t.eq_low_cut; }
     if(t.eq_high_cut!==undefined){ document.getElementById('eq-high-cut').value=t.eq_high_cut; document.getElementById('hc-val').textContent=t.eq_high_cut; }
     if(t.eq_speech_boost!==undefined){ document.getElementById('eq-speech-boost').value=t.eq_speech_boost; document.getElementById('sb-val').textContent=t.eq_speech_boost; }
