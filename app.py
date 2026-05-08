@@ -39,7 +39,7 @@ state = {
 }
 
 tuning = {
-    "bitrate": 96, "gate_threshold": 3, "vol_boost": 0,
+    "bitrate": 96, "gate_threshold": 3, "vol_boost": 0, "rtl_squelch": 0,
     "eq_low_cut": 200, "eq_high_cut": 3500, "eq_speech_boost": 6,
     "frequency": RTL_FREQUENCY, "modulation": RTL_MODULATION,
     "gain": int(RTL_GAIN), "ppm": int(RTL_PPM),
@@ -68,13 +68,13 @@ def load_tuning():
         print(f"[STREAM] Failed to load tuning: {e}", flush=True)
 
 def build_rtl_fm_args():
-    """squelch always OFF (-l 0) — sox noise gate is the squelch"""
+    squelch = int(tuning.get("rtl_squelch", 0))
     return [
         "rtl_fm",
         "-f", str(tuning.get("frequency", RTL_FREQUENCY)),
         "-M", str(tuning.get("modulation", RTL_MODULATION)),
         "-s", str(RTL_SAMPLE_RATE),
-        "-l", "0",
+        "-l", str(squelch),
         "-g", str(tuning.get("gain", int(RTL_GAIN))),
         "-p", str(tuning.get("ppm", int(RTL_PPM))),
     ]
@@ -290,7 +290,7 @@ def index():
 @app.route("/api/start", methods=["POST"])
 def api_start():
     data = request.get_json(silent=True) or {}
-    for key in ("bitrate", "gate_threshold", "vol_boost", "eq_low_cut", "eq_high_cut",
+    for key in ("bitrate", "gate_threshold", "vol_boost", "rtl_squelch", "eq_low_cut", "eq_high_cut",
                 "eq_speech_boost", "gain", "ppm"):
         if key in data:
             tuning[key] = int(data[key])
@@ -311,7 +311,7 @@ def api_tune():
     """Retune without a full stop/start from the UI — just update and restart."""
     data = request.get_json(silent=True) or {}
     was_running = state["running"]
-    for key in ("bitrate", "gate_threshold", "vol_boost", "eq_low_cut", "eq_high_cut",
+    for key in ("bitrate", "gate_threshold", "vol_boost", "rtl_squelch", "eq_low_cut", "eq_high_cut",
                 "eq_speech_boost", "gain", "ppm"):
         if key in data:
             tuning[key] = int(data[key])
