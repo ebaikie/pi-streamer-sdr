@@ -237,6 +237,9 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=pi-streamer
 
+KillMode=control-group
+TimeoutStopSec=5
+
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=${INSTALL_DIR}
