@@ -15,7 +15,7 @@ import subprocess
 import threading
 import time
 from flask import Flask, render_template, jsonify, request
-from urllib.request import urlopen
+import socket
 
 app = Flask(__name__)
 
@@ -368,9 +368,9 @@ if __name__ == "__main__":
     def auto_start():
         for attempt in range(15):
             try:
-                with urlopen(f"http://{ICECAST_HOST}:{ICECAST_PORT}/", timeout=2):
+                with socket.create_connection((ICECAST_HOST, ICECAST_PORT), timeout=2):
                     break
-            except Exception:
+            except OSError:
                 print(f"[STREAM] Waiting for Icecast... ({attempt+1}/15)", flush=True)
                 time.sleep(2)
         else:
