@@ -113,10 +113,6 @@
         <label>PPM Correction</label>
         <input type="number" id="ppm" value="0" min="-100" max="100" step="1">
       </div>
-      <div class="cg">
-        <label>RTL Squelch (<span id="sq-val">5</span>) &#8592; 0=off</label>
-        <input type="range" id="rtl-squelch" min="0" max="100" step="1" value="5" style="accent-color:var(--green);">
-      </div>
     </div>
     <div style="display:flex; gap:.5rem; margin-top:.75rem; flex-wrap:wrap;">
       <button class="btn-sm" onclick="doTune()">&#9654; Apply &amp; Retune</button>
@@ -179,16 +175,16 @@
         <input type="range" id="eq-speech-boost" min="0" max="15" value="6" style="accent-color:var(--green);">
       </div>
       <div class="cg">
-        <label>Noise Gate (<span id="gate-val">0</span>)</label>
-        <input type="range" id="gate-threshold" min="0" max="10" value="0" style="accent-color:var(--green);">
+        <label>Squelch Gate (<span id="gate-val">5</span>)</label>
+        <input type="range" id="gate-threshold" min="0" max="10" value="5" style="accent-color:var(--green);">
       </div>
       <div class="cg">
         <label>Vol Boost (<span id="vb-val">10</span> dB)</label>
         <input type="range" id="vol-boost" min="-10" max="20" step="1" value="10" style="accent-color:var(--green);">
       </div>
       <div class="cg wide" style="font-size:.55rem;color:#555;padding:0 .25rem;">
-        Use RTL Squelch (above) to gate on RF carrier. Keep Noise Gate at 0 when RTL Squelch is active. &bull;
-        Gisborne: SQL 5+ / Vol +10 / Gate 0
+        Squelch Gate mutes idle noise between transmissions. rtl_fm runs at -l 0 (constant stream); sox compand is the gate. &bull;
+        Tune up from 5 until noise disappears. If speech is cut off, reduce it.
       </div>
     </div>
   </div>
@@ -228,7 +224,6 @@ function log(m) {
 
 // Slider labels
 document.getElementById('gain').addEventListener('input', function(){ document.getElementById('gain-val').textContent = this.value; });
-document.getElementById('rtl-squelch').addEventListener('input', function(){ document.getElementById('sq-val').textContent = this.value; });
 document.getElementById('eq-low-cut').addEventListener('input', function(){ document.getElementById('lc-val').textContent = this.value; });
 document.getElementById('eq-high-cut').addEventListener('input', function(){ document.getElementById('hc-val').textContent = this.value; });
 document.getElementById('eq-speech-boost').addEventListener('input', function(){ document.getElementById('sb-val').textContent = this.value; });
@@ -259,7 +254,6 @@ function getSettings() {
     modulation: document.getElementById('modulation').value,
     gain: parseInt(document.getElementById('gain').value),
     ppm: parseInt(document.getElementById('ppm').value),
-    rtl_squelch: parseInt(document.getElementById('rtl-squelch').value),
     bitrate: parseInt(document.getElementById('bitrate').value),
     gate_threshold: parseInt(document.getElementById('gate-threshold').value),
     vol_boost: parseInt(document.getElementById('vol-boost').value),
@@ -378,7 +372,6 @@ async function initState(){
     if(t.modulation) document.getElementById('modulation').value=t.modulation;
     if(t.gain!==undefined){ document.getElementById('gain').value=t.gain; document.getElementById('gain-val').textContent=t.gain; }
     if(t.ppm!==undefined) document.getElementById('ppm').value=t.ppm;
-    if(t.rtl_squelch!==undefined){ document.getElementById('rtl-squelch').value=t.rtl_squelch; document.getElementById('sq-val').textContent=t.rtl_squelch; }
     if(t.bitrate) document.getElementById('bitrate').value=t.bitrate;
     if(t.gate_threshold!==undefined){ document.getElementById('gate-threshold').value=t.gate_threshold; document.getElementById('gate-val').textContent=t.gate_threshold; }
     if(t.vol_boost!==undefined){ document.getElementById('vol-boost').value=t.vol_boost; document.getElementById('vb-val').textContent=t.vol_boost; }

@@ -56,6 +56,7 @@ apt-get install -y \
     sox \
     ffmpeg \
     rtl-sdr \
+    pv \
     python3 \
     python3-flask \
     curl \

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Pi Streamer SDR — RTL-SDR to Icecast streaming server.
 
-Pipeline: rtl_fm → sox (EQ) → ffmpeg (MP3) → Icecast
+Pipeline: rtl_fm → sox (EQ + compand gate) → pv (buffer) → ffmpeg (MP3) → Icecast
 
-RTL squelch (-l N) gates on RF carrier. When squelch closes, rtl_fm stops
-outputting and the pipeline stalls. Icecast source-timeout=0 keeps the source
-connection alive indefinitely so the mount never drops during silence.
+rtl_fm runs with squelch OFF (-l 0) so the byte stream is continuous.
+The sox compand is the effective squelch — it attenuates idle noise to near-
+silence without stopping the stream. pv buffers brief upstream stalls.
 """
 
 import json as jsonlib
@@ -39,7 +39,7 @@ state = {
 }
 
 tuning = {
-    "bitrate": 96, "gate_threshold": 0, "vol_boost": 10, "rtl_squelch": 5,
+    "bitrate": 96, "gate_threshold": 5, "vol_boost": 10,
     "eq_low_cut": 200, "eq_high_cut": 3500, "eq_speech_boost": 6,
     "frequency": RTL_FREQUENCY, "modulation": RTL_MODULATION,
     "gain": int(RTL_GAIN), "ppm": int(RTL_PPM),
@@ -68,13 +68,12 @@ def load_tuning():
         print(f"[STREAM] Failed to load tuning: {e}", flush=True)
 
 def build_rtl_fm_args():
-    squelch = int(tuning.get("rtl_squelch", 0))
     return [
         "rtl_fm",
         "-f", str(tuning.get("frequency", RTL_FREQUENCY)),
         "-M", str(tuning.get("modulation", RTL_MODULATION)),
         "-s", str(RTL_SAMPLE_RATE),
-        "-l", str(squelch),
+        "-l", "0",  # squelch off — sox compand is the gate; rtl squelch stops the byte stream, breaking Icecast
         "-g", str(tuning.get("gain", int(RTL_GAIN))),
         "-p", str(tuning.get("ppm", int(RTL_PPM))),
     ]
@@ -125,9 +124,10 @@ def build_ffmpeg_args():
 def build_shell_command():
     rtl = " ".join(build_rtl_fm_args())
     sox = " ".join(build_sox_filter_args())
+    buf = "pv -q -B 1m"
     ffm = " ".join(build_ffmpeg_args())
-    kill = "pkill -9 rtl_fm; pkill -9 sox; pkill -9 ffmpeg; sleep 1"
-    return f"{kill}; {rtl} | {sox} | {ffm}"
+    kill = "pkill -9 rtl_fm; pkill -9 sox; pkill -9 pv; pkill -9 ffmpeg; sleep 1"
+    return f"{kill}; {rtl} | {sox} | {buf} | {ffm}"
 
 def poll_icecast_stats():
     try:
