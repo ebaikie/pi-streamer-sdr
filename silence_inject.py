@@ -9,9 +9,9 @@ import sys
 import select
 
 rate = int(sys.argv[1]) if len(sys.argv) > 1 else 22050
-chunk_size = 2 * rate * 50 // 1000  # 50 ms of 16-bit mono silence
+chunk_size = 2 * rate * 10 // 1000  # 10 ms of 16-bit mono silence
 silence = bytes(chunk_size)
-timeout = 0.05
+timeout = 0.01
 
 stdin = sys.stdin.buffer
 stdout = sys.stdout.buffer
@@ -19,7 +19,7 @@ stdout = sys.stdout.buffer
 while True:
     ready, _, _ = select.select([stdin], [], [], timeout)
     if ready:
-        data = stdin.read1(chunk_size)
+        data = stdin.read1(8192)
         if not data:
             break
         stdout.write(data)
