@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Pi Streamer SDR — RTL-SDR to Icecast streaming server.
 
-Pipeline: rtl_fm → sox (EQ/gate) → ffmpeg (MP3) → Icecast
+Pipeline: rtl_fm → silence_inject.py → sox (EQ) → ffmpeg (MP3) → Icecast
 
-CRITICAL: rtl_fm runs with squelch OFF (-l 0). The sox noise gate is the
-effective squelch. This keeps ffmpeg fed at all times so the Icecast mount
-never drops between transmissions.
+rtl_fm runs with RTL squelch (-l N). When the squelch closes, rtl_fm
+produces no output, so silence_inject.py injects zero-byte samples to keep
+ffmpeg fed and the Icecast mount alive between transmissions.
 """
 
 import json as jsonlib
@@ -124,10 +124,11 @@ def build_ffmpeg_args():
 
 def build_shell_command():
     rtl = " ".join(build_rtl_fm_args())
+    inj = f"python3 {INSTALL_DIR}/silence_inject.py {RTL_SAMPLE_RATE}"
     sox = " ".join(build_sox_filter_args())
     ffm = " ".join(build_ffmpeg_args())
     kill = "pkill -9 rtl_fm; pkill -9 sox; pkill -9 ffmpeg; sleep 1"
-    return f"{kill}; {rtl} | {sox} | {ffm}"
+    return f"{kill}; {rtl} | {inj} | {sox} | {ffm}"
 
 def poll_icecast_stats():
     try:
