@@ -140,7 +140,7 @@ cat > /etc/icecast2/icecast.xml << ICEXML
         <queue-size>262144</queue-size>
         <client-timeout>30</client-timeout>
         <header-timeout>15</header-timeout>
-        <source-timeout>10</source-timeout>
+        <source-timeout>0</source-timeout>
         <burst-on-connect>1</burst-on-connect>
         <burst-size>65535</burst-size>
     </limits>

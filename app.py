@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Pi Streamer SDR — RTL-SDR to Icecast streaming server.
 
-Pipeline: rtl_fm → silence_inject.py → sox (EQ) → ffmpeg (MP3) → Icecast
+Pipeline: rtl_fm → sox (EQ) → ffmpeg (MP3) → Icecast
 
-rtl_fm runs with RTL squelch (-l N). When the squelch closes, rtl_fm
-produces no output, so silence_inject.py injects zero-byte samples to keep
-ffmpeg fed and the Icecast mount alive between transmissions.
+RTL squelch (-l N) gates on RF carrier. When squelch closes, rtl_fm stops
+outputting and the pipeline stalls. Icecast source-timeout=0 keeps the source
+connection alive indefinitely so the mount never drops during silence.
 """
 
 import json as jsonlib
@@ -124,11 +124,10 @@ def build_ffmpeg_args():
 
 def build_shell_command():
     rtl = " ".join(build_rtl_fm_args())
-    inj = f"python3 {INSTALL_DIR}/silence_inject.py {RTL_SAMPLE_RATE}"
     sox = " ".join(build_sox_filter_args())
     ffm = " ".join(build_ffmpeg_args())
     kill = "pkill -9 rtl_fm; pkill -9 sox; pkill -9 ffmpeg; sleep 1"
-    return f"{kill}; {rtl} | {inj} | {sox} | {ffm}"
+    return f"{kill}; {rtl} | {sox} | {ffm}"
 
 def poll_icecast_stats():
     try:
@@ -150,7 +149,7 @@ def monitor_loop():
     decay = 0.9
     restart_count = 0
     mount_missing_count = 0
-    MOUNT_MISSING_THRESHOLD = 20
+    MOUNT_MISSING_THRESHOLD = 300  # Icecast source-timeout=0 keeps mount alive; this is last-resort only
     heartbeat_counter = 0
 
     while state["running"]:
