@@ -44,6 +44,7 @@ tuning = {
     "frequency": RTL_FREQUENCY, "modulation": RTL_MODULATION,
     "gain": int(RTL_GAIN), "ppm": int(RTL_PPM),
     "rtl_squelch": 0,
+    "noise_level": 5,
     "presets": [],
 }
 
@@ -129,7 +130,8 @@ def build_shell_command():
     ffm = " ".join(build_ffmpeg_args())
     kill = "pkill -9 rtl_fm; pkill -9 sox; pkill -9 pv; pkill -9 ffmpeg; sleep 1"
     if tuning.get("rtl_squelch", 0) > 0:
-        inject = f"python3 {INSTALL_DIR}/silence_inject.py {RTL_SAMPLE_RATE}"
+        amp = tuning.get("noise_level", 5) / 1000.0
+        inject = f"python3 {INSTALL_DIR}/silence_inject.py {RTL_SAMPLE_RATE} {amp:.4f}"
         return f"{kill}; {rtl} | {inject} | {sox} | {buf} | {ffm}"
     return f"{kill}; {rtl} | {sox} | {buf} | {ffm}"
 
@@ -296,7 +298,7 @@ def index():
 @app.route("/api/start", methods=["POST"])
 def api_start():
     data = request.get_json(silent=True) or {}
-    for key in ("bitrate", "gate_threshold", "vol_boost", "rtl_squelch", "eq_low_cut", "eq_high_cut",
+    for key in ("bitrate", "gate_threshold", "vol_boost", "rtl_squelch", "noise_level", "eq_low_cut", "eq_high_cut",
                 "eq_speech_boost", "gain", "ppm"):
         if key in data:
             tuning[key] = int(data[key])
@@ -317,7 +319,7 @@ def api_tune():
     """Retune without a full stop/start from the UI — just update and restart."""
     data = request.get_json(silent=True) or {}
     was_running = state["running"]
-    for key in ("bitrate", "gate_threshold", "vol_boost", "rtl_squelch", "eq_low_cut", "eq_high_cut",
+    for key in ("bitrate", "gate_threshold", "vol_boost", "rtl_squelch", "noise_level", "eq_low_cut", "eq_high_cut",
                 "eq_speech_boost", "gain", "ppm"):
         if key in data:
             tuning[key] = int(data[key])
