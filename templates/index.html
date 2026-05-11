@@ -182,9 +182,13 @@
         <label>Vol Boost (<span id="vb-val">10</span> dB)</label>
         <input type="range" id="vol-boost" min="-10" max="20" step="1" value="10" style="accent-color:var(--green);">
       </div>
+      <div class="cg">
+        <label>RTL Squelch (<span id="rsq-val">off</span>)</label>
+        <input type="range" id="rtl-squelch" min="0" max="200" step="5" value="0" style="accent-color:var(--amber);">
+      </div>
       <div class="cg wide" style="font-size:.55rem;color:#555;padding:0 .25rem;">
-        Squelch Gate mutes idle noise between transmissions. rtl_fm runs at -l 0 (constant stream); sox compand is the gate. &bull;
-        Tune up from 5 until noise disappears. If speech is cut off, reduce it.
+        <strong style="color:#444;">RTL Squelch</strong> — hardware squelch via rtl_fm (-l). Cuts static when idle; low-level white noise is injected to keep the stream alive. Start around 30–60 and tune up until static disappears. &bull;
+        <strong style="color:#444;">Squelch Gate</strong> — software sox gate as a secondary layer. Set to 0 when RTL Squelch is active.
       </div>
     </div>
   </div>
@@ -229,6 +233,7 @@ document.getElementById('eq-high-cut').addEventListener('input', function(){ doc
 document.getElementById('eq-speech-boost').addEventListener('input', function(){ document.getElementById('sb-val').textContent = this.value; });
 document.getElementById('gate-threshold').addEventListener('input', function(){ document.getElementById('gate-val').textContent = this.value; });
 document.getElementById('vol-boost').addEventListener('input', function(){ document.getElementById('vb-val').textContent = this.value; });
+document.getElementById('rtl-squelch').addEventListener('input', function(){ const v=parseInt(this.value); document.getElementById('rsq-val').textContent = v===0?'off':v; });
 
 function freqMhzToHz(val) {
   const s = String(val).trim().toUpperCase().replace('M','').replace('MHZ','');
@@ -260,6 +265,7 @@ function getSettings() {
     eq_low_cut: parseInt(document.getElementById('eq-low-cut').value),
     eq_high_cut: parseInt(document.getElementById('eq-high-cut').value),
     eq_speech_boost: parseInt(document.getElementById('eq-speech-boost').value),
+    rtl_squelch: parseInt(document.getElementById('rtl-squelch').value),
   };
 }
 
@@ -378,6 +384,7 @@ async function initState(){
     if(t.eq_low_cut!==undefined){ document.getElementById('eq-low-cut').value=t.eq_low_cut; document.getElementById('lc-val').textContent=t.eq_low_cut; }
     if(t.eq_high_cut!==undefined){ document.getElementById('eq-high-cut').value=t.eq_high_cut; document.getElementById('hc-val').textContent=t.eq_high_cut; }
     if(t.eq_speech_boost!==undefined){ document.getElementById('eq-speech-boost').value=t.eq_speech_boost; document.getElementById('sb-val').textContent=t.eq_speech_boost; }
+    if(t.rtl_squelch!==undefined){ document.getElementById('rtl-squelch').value=t.rtl_squelch; document.getElementById('rsq-val').textContent=t.rtl_squelch===0?'off':t.rtl_squelch; }
     updateFreqDisplay(t.frequency||'164.750M', t.modulation||'fm', t.gain||40, t.ppm||0);
     renderPresets(t.presets||[]);
     if(d.running){ setRun(true); startPoll(); log('Stream already active (auto-started)'); }

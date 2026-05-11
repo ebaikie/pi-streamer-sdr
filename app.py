@@ -43,6 +43,7 @@ tuning = {
     "eq_low_cut": 200, "eq_high_cut": 3500, "eq_speech_boost": 6,
     "frequency": RTL_FREQUENCY, "modulation": RTL_MODULATION,
     "gain": int(RTL_GAIN), "ppm": int(RTL_PPM),
+    "rtl_squelch": 0,
     "presets": [],
 }
 
@@ -73,7 +74,7 @@ def build_rtl_fm_args():
         "-f", str(tuning.get("frequency", RTL_FREQUENCY)),
         "-M", str(tuning.get("modulation", RTL_MODULATION)),
         "-s", str(RTL_SAMPLE_RATE),
-        "-l", "0",  # squelch off — sox compand is the gate; rtl squelch stops the byte stream, breaking Icecast
+        "-l", str(tuning.get("rtl_squelch", 0)),  # 0=off; silence_inject.py keeps stream alive when squelch > 0
         "-g", str(tuning.get("gain", int(RTL_GAIN))),
         "-p", str(tuning.get("ppm", int(RTL_PPM))),
     ]
@@ -127,6 +128,9 @@ def build_shell_command():
     buf = "pv -q -B 1m"
     ffm = " ".join(build_ffmpeg_args())
     kill = "pkill -9 rtl_fm; pkill -9 sox; pkill -9 pv; pkill -9 ffmpeg; sleep 1"
+    if tuning.get("rtl_squelch", 0) > 0:
+        inject = f"python3 {INSTALL_DIR}/silence_inject.py {RTL_SAMPLE_RATE}"
+        return f"{kill}; {rtl} | {inject} | {sox} | {buf} | {ffm}"
     return f"{kill}; {rtl} | {sox} | {buf} | {ffm}"
 
 def poll_icecast_stats():
@@ -215,9 +219,10 @@ def monitor_loop():
     state["peak_level"] = 0
 
 def kill_existing():
-    subprocess.run(["pkill", "-9", "rtl_fm"], capture_output=True)
-    subprocess.run(["pkill", "-9", "sox"],    capture_output=True)
-    subprocess.run(["pkill", "-9", "ffmpeg"], capture_output=True)
+    subprocess.run(["pkill", "-9", "rtl_fm"],          capture_output=True)
+    subprocess.run(["pkill", "-9", "sox"],             capture_output=True)
+    subprocess.run(["pkill", "-9", "ffmpeg"],          capture_output=True)
+    subprocess.run(["pkill", "-f", "silence_inject"],  capture_output=True)
     time.sleep(1)
 
 def start_pipeline():
