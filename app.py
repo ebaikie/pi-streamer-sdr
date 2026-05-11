@@ -193,15 +193,12 @@ def monitor_loop():
         state["peak_level"] = 0
         print(f"[STREAM] {reason}", flush=True)
 
-        if restart_count > 50:
-            state["running"] = False
-            state["error"] = f"Gave up after 50 restarts"
-            return
-
-        print(f"[STREAM] Auto-restart {restart_count}/50 in 3s...", flush=True)
-        state["error"] = f"Restarting ({restart_count})..."
+        # Back off up to 60s after many failures — never give up permanently
+        delay = min(60, 3 + (restart_count - 1) * 2)
+        print(f"[STREAM] Auto-restart #{restart_count} in {delay}s...", flush=True)
+        state["error"] = f"Restarting (#{restart_count})..."
         state["running"] = False
-        time.sleep(3)
+        time.sleep(delay)
         result = start_pipeline()
         if result.get("ok"):
             print("[STREAM] Auto-restart successful", flush=True)
@@ -231,12 +228,16 @@ def start_pipeline():
                 return {"ok": False, "error": "Already running"}
             print("[STREAM] Stale state, forcing cleanup...", flush=True)
             state["running"] = False
-            if state["proc"]:
-                try:
+
+        # Always reap the old shell process to prevent zombie accumulation
+        if state["proc"]:
+            try:
+                if state["proc"].poll() is None:
                     state["proc"].kill()
-                    state["proc"].wait(timeout=3)
-                except Exception:
-                    pass
+                state["proc"].wait(timeout=3)
+            except Exception:
+                pass
+            state["proc"] = None
 
         state["error"] = None
         state["signal_level"] = 0
