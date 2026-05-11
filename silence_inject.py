@@ -87,6 +87,14 @@ while not eof.is_set():
             chunk = noise_data[noise_pos:] + noise_data[:end - len(noise_data)]
         noise_pos = end % len(noise_data)
 
-    stdout.write(chunk)
-    stdout.flush()
+    try:
+        stdout.write(chunk)
+        stdout.flush()
+    except (BrokenPipeError, OSError):
+        # Downstream (sox/ffmpeg) died. rtl_fm won't see SIGPIPE reliably,
+        # so kill it explicitly so the shell pipeline exits and the watchdog
+        # can detect proc_dead and restart cleanly.
+        import subprocess
+        subprocess.run(['pkill', '-9', 'rtl_fm'], capture_output=True)
+        sys.exit(0)
     next_t += interval
