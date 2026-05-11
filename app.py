@@ -39,12 +39,12 @@ state = {
 }
 
 tuning = {
-    "bitrate": 96, "gate_threshold": 5, "vol_boost": 10,
-    "eq_low_cut": 200, "eq_high_cut": 3500, "eq_speech_boost": 6,
+    "bitrate": 96, "gate_threshold": 0, "vol_boost": 0,
+    "eq_low_cut": 300, "eq_high_cut": 3500, "eq_speech_boost": 3,
     "frequency": RTL_FREQUENCY, "modulation": RTL_MODULATION,
     "gain": int(RTL_GAIN), "ppm": int(RTL_PPM),
-    "rtl_squelch": 0,
-    "noise_level": 5,
+    "rtl_squelch": 40,
+    "noise_level": 4,
     "presets": [],
 }
 

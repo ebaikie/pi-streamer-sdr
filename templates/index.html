@@ -163,32 +163,32 @@
     <div class="panel-title">Audio EQ &amp; Filter</div>
     <div class="controls">
       <div class="cg">
-        <label>Low Cut (<span id="lc-val">200</span> Hz)</label>
-        <input type="range" id="eq-low-cut" min="0" max="500" step="50" value="200" style="accent-color:var(--green);">
+        <label>Low Cut (<span id="lc-val">300</span> Hz)</label>
+        <input type="range" id="eq-low-cut" min="0" max="500" step="50" value="300" style="accent-color:var(--green);">
       </div>
       <div class="cg">
         <label>High Cut (<span id="hc-val">3500</span> Hz)</label>
         <input type="range" id="eq-high-cut" min="2000" max="11000" step="500" value="3500" style="accent-color:var(--green);">
       </div>
       <div class="cg">
-        <label>Speech Boost (<span id="sb-val">6</span> dB)</label>
-        <input type="range" id="eq-speech-boost" min="0" max="15" value="6" style="accent-color:var(--green);">
+        <label>Speech Boost (<span id="sb-val">3</span> dB)</label>
+        <input type="range" id="eq-speech-boost" min="0" max="15" value="3" style="accent-color:var(--green);">
       </div>
       <div class="cg">
-        <label>Squelch Gate (<span id="gate-val">5</span>)</label>
-        <input type="range" id="gate-threshold" min="0" max="10" value="5" style="accent-color:var(--green);">
+        <label>Squelch Gate (<span id="gate-val">0</span>)</label>
+        <input type="range" id="gate-threshold" min="0" max="10" value="0" style="accent-color:var(--green);">
       </div>
       <div class="cg">
-        <label>Vol Boost (<span id="vb-val">10</span> dB)</label>
-        <input type="range" id="vol-boost" min="-10" max="20" step="1" value="10" style="accent-color:var(--green);">
+        <label>Vol Boost (<span id="vb-val">0</span> dB)</label>
+        <input type="range" id="vol-boost" min="-10" max="20" step="1" value="0" style="accent-color:var(--green);">
       </div>
       <div class="cg">
-        <label>RTL Squelch (<span id="rsq-val">off</span>)</label>
-        <input type="range" id="rtl-squelch" min="0" max="200" step="5" value="0" style="accent-color:var(--amber);">
+        <label>RTL Squelch (<span id="rsq-val">40</span>)</label>
+        <input type="range" id="rtl-squelch" min="0" max="200" step="5" value="40" style="accent-color:var(--amber);">
       </div>
       <div class="cg">
-        <label>Noise Level (<span id="nl-val">0.5</span>%)</label>
-        <input type="range" id="noise-level" min="1" max="50" step="1" value="5" style="accent-color:var(--amber);">
+        <label>Noise Level (<span id="nl-val">0.4</span>%)</label>
+        <input type="range" id="noise-level" min="1" max="50" step="1" value="4" style="accent-color:var(--amber);">
       </div>
       <div class="cg wide" style="font-size:.55rem;color:#555;padding:0 .25rem;">
         <strong style="color:#444;">RTL Squelch</strong> — hardware squelch via rtl_fm (-l). Cuts static when idle; low-level white noise is injected to keep the stream alive. Start around 30–60 and tune up until static disappears. &bull;
