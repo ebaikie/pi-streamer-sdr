@@ -140,6 +140,10 @@
       <span class="meter-val" id="mv">0</span>
     </div>
     <div class="meter-ticks"><span>0</span><span>20</span><span>40</span><span>60</span><span>80</span><span>100</span></div>
+    <div class="status" style="margin-top:.25rem;">
+      <span class="dot" id="sdr-dot" style="background:#333;"></span>
+      <span id="sdr-txt" style="color:#555;">SDR: checking&hellip;</span>
+    </div>
   </div>
 
   <!-- Audio settings -->
@@ -351,11 +355,33 @@ function renderPresets(presets) {
 function startPoll(){ stopPoll(); poll=setInterval(pollStatus,500); }
 function stopPoll(){ if(poll){clearInterval(poll);poll=null;} }
 
+function renderSdrStatus(present, fastDeaths) {
+  const dot = document.getElementById('sdr-dot');
+  const txt = document.getElementById('sdr-txt');
+  if (present === true) {
+    dot.style.cssText = 'background:var(--green);box-shadow:0 0 6px var(--green)';
+    txt.style.color = 'var(--green-dim)'; txt.textContent = 'SDR: connected';
+  } else if (present === false) {
+    dot.style.cssText = 'background:var(--red);box-shadow:0 0 6px var(--red)';
+    txt.style.color = 'var(--red)'; txt.textContent = 'SDR: not detected';
+  } else {
+    dot.style.cssText = 'background:#333;box-shadow:none';
+    txt.style.color = '#555'; txt.textContent = 'SDR: checking…';
+  }
+  if (fastDeaths >= 3 && present === false) {
+    document.getElementById('etxt').textContent = `SDR disconnected? (${fastDeaths} rapid exits)`;
+  }
+}
+setInterval(async function() {
+  try { const r = await fetch('/api/status'); const d = await r.json(); renderSdrStatus(d.sdr_present, d.fast_death_count); } catch(e) {}
+}, 10000);
+
 async function pollStatus(){
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
     updateMeter(d.signal_level, d.peak_level);
+    renderSdrStatus(d.sdr_present, d.fast_death_count);
     if(!d.running){ setRun(false); stopPoll(); if(d.error){ log('Died: '+d.error); document.getElementById('etxt').textContent=d.error; } }
   } catch(e){}
 }
@@ -394,6 +420,7 @@ async function initState(){
     if(t.noise_level!==undefined){ document.getElementById('noise-level').value=t.noise_level; document.getElementById('nl-val').textContent=(t.noise_level/10).toFixed(1); }
     updateFreqDisplay(t.frequency||'164.750M', t.modulation||'fm', t.gain||40, t.ppm||0);
     renderPresets(t.presets||[]);
+    renderSdrStatus(d.sdr_present, d.fast_death_count);
     if(d.running){ setRun(true); startPoll(); log('Stream already active (auto-started)'); }
   } catch(e){}
 }

@@ -36,6 +36,7 @@ pipeline_lock = threading.Lock()
 state = {
     "running": False, "proc": None, "monitor_thread": None,
     "signal_level": 0.0, "peak_level": 0.0, "error": None, "last_cmd": "",
+    "sdr_present": None, "fast_death_count": 0, "proc_start_time": None,
 }
 
 tuning = {
@@ -151,6 +152,19 @@ def poll_icecast_stats():
     except Exception:
         return 0.0
 
+def check_sdr_present():
+    try:
+        r = subprocess.run(["lsusb"], capture_output=True, text=True, timeout=5)
+        out = r.stdout.lower()
+        return any(s in out for s in ["0bda:2838", "0bda:2832", "rtl2838", "rtl2832"])
+    except Exception:
+        return None
+
+def sdr_check_loop():
+    while True:
+        state["sdr_present"] = check_sdr_present()
+        time.sleep(10)
+
 def monitor_loop():
     decay = 0.9
     restart_count = 0
@@ -179,6 +193,14 @@ def monitor_loop():
         needs_restart = False
         reason = ""
         if proc_dead:
+            elapsed = time.time() - (state["proc_start_time"] or 0)
+            if elapsed < 5:
+                state["fast_death_count"] += 1
+                if state["fast_death_count"] >= 3:
+                    print(f"[STREAM] WARNING: SDR may be disconnected "
+                          f"({state['fast_death_count']} rapid exits)", flush=True)
+            else:
+                state["fast_death_count"] = 0
             needs_restart = True
             err = ""
             try:
@@ -266,6 +288,7 @@ def start_pipeline():
 
             state["proc"] = proc
             state["running"] = True
+            state["proc_start_time"] = time.time()
             t = threading.Thread(target=monitor_loop, daemon=True)
             t.start()
             state["monitor_thread"] = t
@@ -277,6 +300,7 @@ def start_pipeline():
 def stop_pipeline():
     with pipeline_lock:
         state["running"] = False
+        state["fast_death_count"] = 0
         if state["proc"]:
             try:
                 state["proc"].kill()
@@ -368,6 +392,8 @@ def api_status():
         "error": state["error"],
         "tuning": tuning,
         "last_cmd": state["last_cmd"],
+        "sdr_present": state["sdr_present"],
+        "fast_death_count": state["fast_death_count"],
     })
 
 if __name__ == "__main__":
@@ -397,4 +423,5 @@ if __name__ == "__main__":
             print(f"[STREAM] Auto-start failed: {result.get('error')}", flush=True)
 
     threading.Thread(target=auto_start, daemon=True).start()
+    threading.Thread(target=sdr_check_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=WEB_UI_PORT, debug=False)
