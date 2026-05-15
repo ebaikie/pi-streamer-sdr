@@ -113,6 +113,7 @@ def build_rtl_power_args(span_hz=800_000, step_hz=10_000, integration_secs=2):
     ]
     if gain != -1:
         args += ["-g", str(gain)]
+    args.append("-")  # write CSV to stdout
     return args
 
 def parse_rtl_power_csv(text):
