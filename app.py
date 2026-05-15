@@ -487,11 +487,17 @@ def api_presets_save():
     data = request.get_json(silent=True) or {}
     label = str(data.get("label", "")).strip()
     freq  = str(data.get("frequency", tuning.get("frequency", ""))).strip()
-    mod   = str(data.get("modulation", tuning.get("modulation", "fm"))).strip()
     if not label or not freq:
         return jsonify({"ok": False, "error": "label and frequency required"}), 400
+    preset = {"label": label}
+    for key in ("frequency", "modulation", "gain", "ppm", "rtl_squelch", "noise_level",
+                "eq_low_cut", "eq_high_cut", "eq_speech_boost", "gate_threshold", "vol_boost", "bitrate"):
+        if key in data:
+            preset[key] = data[key]
+        elif key in tuning:
+            preset[key] = tuning[key]
     presets = [p for p in tuning.get("presets", []) if p.get("label") != label]
-    presets.append({"label": label, "frequency": freq, "modulation": mod})
+    presets.append(preset)
     tuning["presets"] = presets
     save_tuning()
     return jsonify({"ok": True, "presets": presets})

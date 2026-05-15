@@ -347,7 +347,7 @@ async function savePreset() {
   const s = getSettings();
   try {
     const r = await fetch('/api/presets',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({label,frequency:s.frequency,modulation:s.modulation})});
+      body:JSON.stringify({label,...s})});
     const d = await r.json();
     if(d.ok){ renderPresets(d.presets); log(`Preset saved: ${label}`); }
   } catch(e){ log('Save preset error: '+e.message); }
@@ -361,10 +361,21 @@ async function deletePreset(label) {
   } catch(e){ log('Delete preset error: '+e.message); }
 }
 
-async function tunePreset(freq, mod) {
-  document.getElementById('frequency').value = String(freq).replace('M','');
-  document.getElementById('modulation').value = mod || 'fm';
-  document.getElementById('gain-val').textContent = gainLabel(document.getElementById('gain').value);
+async function tunePreset(idx) {
+  const p = currentPresets[idx];
+  if (!p) return;
+  if(p.frequency){ document.getElementById('frequency').value = String(p.frequency).replace('M',''); }
+  if(p.modulation) document.getElementById('modulation').value = p.modulation;
+  if(p.gain!==undefined){ document.getElementById('gain').value=p.gain; document.getElementById('gain-val').textContent=gainLabel(p.gain); }
+  if(p.ppm!==undefined) document.getElementById('ppm').value=p.ppm;
+  if(p.bitrate) document.getElementById('bitrate').value=p.bitrate;
+  if(p.rtl_squelch!==undefined){ document.getElementById('rtl-squelch').value=p.rtl_squelch; document.getElementById('rsq-val').textContent=p.rtl_squelch===0?'off':p.rtl_squelch; }
+  if(p.noise_level!==undefined){ document.getElementById('noise-level').value=p.noise_level; document.getElementById('nl-val').textContent=(p.noise_level/10).toFixed(1); }
+  if(p.eq_low_cut!==undefined){ document.getElementById('eq-low-cut').value=p.eq_low_cut; document.getElementById('lc-val').textContent=p.eq_low_cut; }
+  if(p.eq_high_cut!==undefined){ document.getElementById('eq-high-cut').value=p.eq_high_cut; document.getElementById('hc-val').textContent=p.eq_high_cut; }
+  if(p.eq_speech_boost!==undefined){ document.getElementById('eq-speech-boost').value=p.eq_speech_boost; document.getElementById('sb-val').textContent=p.eq_speech_boost; }
+  if(p.gate_threshold!==undefined){ document.getElementById('gate-threshold').value=p.gate_threshold; document.getElementById('gate-val').textContent=p.gate_threshold; }
+  if(p.vol_boost!==undefined){ document.getElementById('vol-boost').value=p.vol_boost; document.getElementById('vb-val').textContent=p.vol_boost; }
   await doTune();
 }
 
@@ -373,11 +384,11 @@ function renderPresets(presets) {
   const row = document.getElementById('preset-row');
   if(!currentPresets.length){ row.innerHTML='<span style="font-size:.65rem;color:#444;">No presets saved.</span>'; return; }
   const activeFreq = document.getElementById('frequency').value;
-  row.innerHTML = currentPresets.map(p => {
+  row.innerHTML = currentPresets.map((p, i) => {
     const freqDisplay = String(p.frequency).replace('M','');
     const isActive = freqDisplay === activeFreq;
     return `<span style="display:inline-flex;align-items:center;gap:.2rem;">
-      <button class="btn-preset${isActive?' active':''}" onclick="tunePreset('${p.frequency}','${p.modulation}')" title="${p.frequency} ${p.modulation}">${p.label}</button>
+      <button class="btn-preset${isActive?' active':''}" onclick="tunePreset(${i})" title="${p.frequency} ${p.modulation}">${p.label}</button>
       <button class="btn-preset-del" onclick="deletePreset('${p.label}')" title="Delete">&#x2715;</button>
     </span>`;
   }).join('');
