@@ -49,6 +49,15 @@ tuning = {
     "presets": [],
 }
 
+scan_state = {
+    "active": False,
+    "thread": None,
+    "sweep": [],       # [[hz, dbfs], ...] — latest sweep
+    "peak_hold": {},   # {hz_int: dbfs_float} — max per bin, never decays
+    "scan_error": None,
+    "sweep_count": 0,
+}
+
 def save_tuning():
     try:
         with open(STATE_FILE, "w") as f:
@@ -83,6 +92,105 @@ def build_rtl_fm_args():
     if gain != -1:  # -1 = AGC (omit -g flag)
         args += ["-g", str(gain)]
     return args
+
+def _parse_center_hz(freq_str):
+    s = str(freq_str).upper().replace("M", "").replace("HZ", "").strip()
+    n = float(s)
+    return int(n * 1_000_000) if n < 1_000_000 else int(n)
+
+def build_rtl_power_args(span_hz=800_000, step_hz=10_000, integration_secs=2):
+    center = _parse_center_hz(tuning.get("frequency", RTL_FREQUENCY))
+    low_hz  = center - span_hz // 2
+    high_hz = center + span_hz // 2
+    gain = tuning.get("gain", int(RTL_GAIN))
+    ppm  = tuning.get("ppm", int(RTL_PPM))
+    args = [
+        "rtl_power",
+        "-f", f"{low_hz}:{high_hz}:{step_hz}",
+        "-i", str(integration_secs),
+        "-p", str(ppm),
+        "-1",
+    ]
+    if gain != -1:
+        args += ["-g", str(gain)]
+    return args
+
+def parse_rtl_power_csv(text):
+    points = []
+    for line in text.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 7:
+            continue
+        try:
+            hz_low  = int(parts[2])
+            hz_step = float(parts[4])
+            powers  = [float(x) for x in parts[6:] if x.strip()]
+            for i, dbfs in enumerate(powers):
+                center = int(hz_low + (i + 0.5) * hz_step)
+                points.append((center, dbfs))
+        except (ValueError, IndexError):
+            continue
+    return sorted(points, key=lambda x: x[0])
+
+def scan_loop():
+    print("[SCAN] Scan loop started", flush=True)
+    while scan_state["active"]:
+        args = build_rtl_power_args()
+        try:
+            result = subprocess.run(args, capture_output=True, text=True, timeout=15)
+            if result.returncode != 0:
+                err = (result.stderr[:200] if result.stderr else "unknown error").strip()
+                scan_state["scan_error"] = f"rtl_power exit {result.returncode}: {err}"
+                print(f"[SCAN] rtl_power error: {err}", flush=True)
+                time.sleep(1)
+                continue
+            points = parse_rtl_power_csv(result.stdout)
+            if not points:
+                scan_state["scan_error"] = "No data from rtl_power"
+                time.sleep(1)
+                continue
+            scan_state["scan_error"] = None
+            scan_state["sweep"] = [[hz, dbfs] for hz, dbfs in points]
+            scan_state["sweep_count"] += 1
+            ph = scan_state["peak_hold"]
+            for hz, dbfs in points:
+                if hz not in ph or dbfs > ph[hz]:
+                    ph[hz] = dbfs
+        except subprocess.TimeoutExpired:
+            scan_state["scan_error"] = "rtl_power timed out"
+            print("[SCAN] rtl_power timed out", flush=True)
+            time.sleep(1)
+        except FileNotFoundError:
+            scan_state["scan_error"] = "rtl_power not found"
+            scan_state["active"] = False
+            print("[SCAN] rtl_power not found — is rtl-sdr installed?", flush=True)
+        except Exception as e:
+            scan_state["scan_error"] = str(e)
+            print(f"[SCAN] Exception: {e}", flush=True)
+            time.sleep(1)
+    print("[SCAN] Scan loop ended", flush=True)
+
+def start_scan():
+    with pipeline_lock:
+        if scan_state["active"]:
+            return {"ok": False, "error": "Scan already active"}
+        _stop_pipeline_locked()
+        scan_state["active"]      = True
+        scan_state["sweep"]       = []
+        scan_state["scan_error"]  = None
+        scan_state["sweep_count"] = 0
+        t = threading.Thread(target=scan_loop, daemon=True)
+        t.start()
+        scan_state["thread"] = t
+        return {"ok": True}
+
+def stop_scan():
+    with pipeline_lock:
+        scan_state["active"] = False
+        scan_state["thread"] = None
+        subprocess.run(["pkill", "-9", "rtl_power"], capture_output=True)
+        time.sleep(0.5)
+        return {"ok": True}
 
 def build_sox_filter_args():
     thresh = int(tuning.get("gate_threshold", 3))
@@ -300,22 +408,26 @@ def start_pipeline():
             kill_existing()
             return {"ok": False, "error": str(e)}
 
+def _stop_pipeline_locked():
+    """Stop pipeline without acquiring pipeline_lock (caller must hold it)."""
+    state["running"] = False
+    state["fast_death_count"] = 0
+    if state["proc"]:
+        try:
+            state["proc"].kill()
+            state["proc"].wait(timeout=3)
+        except Exception:
+            pass
+    kill_existing()
+    state["proc"] = None
+    state["monitor_thread"] = None
+    state["signal_level"] = 0
+    state["peak_level"] = 0
+    state["error"] = None
+
 def stop_pipeline():
     with pipeline_lock:
-        state["running"] = False
-        state["fast_death_count"] = 0
-        if state["proc"]:
-            try:
-                state["proc"].kill()
-                state["proc"].wait(timeout=3)
-            except Exception:
-                pass
-        kill_existing()
-        state["proc"] = None
-        state["monitor_thread"] = None
-        state["signal_level"] = 0
-        state["peak_level"] = 0
-        state["error"] = None
+        _stop_pipeline_locked()
         return {"ok": True}
 
 @app.route("/")
@@ -346,6 +458,9 @@ def api_tune():
     """Retune without a full stop/start from the UI — just update and restart."""
     data = request.get_json(silent=True) or {}
     was_running = state["running"]
+    if "frequency" in data and str(data["frequency"]).strip() != str(tuning.get("frequency", "")):
+        if scan_state["active"]:
+            scan_state["peak_hold"].clear()
     for key in ("bitrate", "gate_threshold", "vol_boost", "rtl_squelch", "noise_level", "eq_low_cut", "eq_high_cut",
                 "eq_speech_boost", "gain", "ppm"):
         if key in data:
@@ -397,7 +512,47 @@ def api_status():
         "last_cmd": state["last_cmd"],
         "sdr_present": state["sdr_present"],
         "fast_death_count": state["fast_death_count"],
+        "scan_active": scan_state["active"],
     })
+
+@app.route("/api/scan/start", methods=["POST"])
+def api_scan_start():
+    return jsonify(start_scan())
+
+@app.route("/api/scan/stop", methods=["POST"])
+def api_scan_stop():
+    return jsonify(stop_scan())
+
+@app.route("/api/scan/resume", methods=["POST"])
+def api_scan_resume():
+    stop_scan()
+    time.sleep(0.5)
+    result = start_pipeline()
+    return jsonify(result)
+
+@app.route("/api/scan/data")
+def api_scan_data():
+    return jsonify({
+        "active":      scan_state["active"],
+        "sweep":       scan_state["sweep"],
+        "peak_hold":   sorted(scan_state["peak_hold"].items()),
+        "scan_error":  scan_state["scan_error"],
+        "sweep_count": scan_state["sweep_count"],
+        "center_hz":   _parse_center_hz(tuning.get("frequency", RTL_FREQUENCY)),
+        "gain":        tuning.get("gain", int(RTL_GAIN)),
+    })
+
+@app.route("/api/scan/peak_reset", methods=["POST"])
+def api_scan_peak_reset():
+    scan_state["peak_hold"].clear()
+    return jsonify({"ok": True})
+
+@app.route("/api/scan/set_gain", methods=["POST"])
+def api_scan_set_gain():
+    data = request.get_json(silent=True) or {}
+    if "gain" in data:
+        tuning["gain"] = int(data["gain"])
+    return jsonify({"ok": True, "gain": tuning["gain"]})
 
 if __name__ == "__main__":
     print(f"[STREAM] Pi Streamer SDR starting", flush=True)

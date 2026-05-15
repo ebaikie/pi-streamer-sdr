@@ -117,6 +117,7 @@
     <div style="display:flex; gap:.5rem; margin-top:.75rem; flex-wrap:wrap;">
       <button class="btn-sm" onclick="doTune()">&#9654; Apply &amp; Retune</button>
       <button class="btn-sm" onclick="savePreset()">+ Save Preset</button>
+      <button class="btn-sm" id="btn-apply-gain-scan" style="display:none;accent-color:var(--amber);" onclick="doApplyGainToScan()">Apply Gain to Scan</button>
     </div>
   </div>
 
@@ -143,6 +144,30 @@
     <div class="status" style="margin-top:.25rem;">
       <span class="dot" id="sdr-dot" style="background:#333;"></span>
       <span id="sdr-txt" style="color:#555;">SDR: checking&hellip;</span>
+    </div>
+  </div>
+
+  <!-- Spectrum Scanner -->
+  <div class="panel" id="scan-panel">
+    <div class="panel-title" style="cursor:pointer;user-select:none;" onclick="toggleScanPanel()">
+      Spectrum Scanner
+      <span id="scan-chevron" style="float:right;color:var(--green-dim);">&#9660;</span>
+    </div>
+    <div id="scan-body" style="display:none;">
+      <canvas id="spectrum-canvas" width="560" height="180"
+        style="width:100%;background:#050505;border:1px solid var(--border);border-radius:2px;display:block;margin-bottom:.5rem;"></canvas>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.5rem;">
+        <button class="btn-sm" id="btn-scan-start" onclick="doScanStart()">&#9654; Start Scan</button>
+        <button class="btn-sm" id="btn-scan-stop"  onclick="doScanStop()"   style="display:none;">&#9632; Stop Scan</button>
+        <button class="btn-sm" id="btn-scan-resume" onclick="doScanResume()" style="display:none;">&#9654; Resume Stream</button>
+        <button class="btn-sm" onclick="doScanPeakReset()" style="margin-left:auto;">&#8635; Reset Peak</button>
+      </div>
+      <div style="font-size:.6rem;color:var(--green-dim);">
+        <span id="scan-status-txt">Inactive</span>
+        &bull; Sweeps: <span id="scan-sweep-count">0</span>
+        &bull; Gain: <span id="scan-gain-display">&mdash;</span>
+      </div>
+      <div class="err-text" id="scan-err-txt"></div>
     </div>
   </div>
 
@@ -226,6 +251,10 @@
 <script>
 let poll = null;
 let currentPresets = [];
+let scanPoll = null;
+let spectrumPeakHold = {};
+let lastSweep = [];
+let lastCenterHz = null;
 const logEl = document.getElementById('log');
 
 function log(m) {
@@ -403,6 +432,188 @@ function updateMeter(lv,pk){
   document.getElementById('mv').textContent=Math.round(lv);
 }
 
+// --- Spectrum Scanner ---
+
+function toggleScanPanel() {
+  const body = document.getElementById('scan-body');
+  const chev = document.getElementById('scan-chevron');
+  const hidden = body.style.display === 'none';
+  body.style.display = hidden ? '' : 'none';
+  chev.innerHTML = hidden ? '&#9650;' : '&#9660;';
+}
+
+function setScanUI(active) {
+  document.getElementById('btn-scan-start').style.display   = active ? 'none' : '';
+  document.getElementById('btn-scan-stop').style.display    = active ? ''     : 'none';
+  document.getElementById('btn-scan-resume').style.display  = active ? ''     : 'none';
+  document.getElementById('btn-apply-gain-scan').style.display = active ? '' : 'none';
+  document.getElementById('scan-status-txt').textContent    = active ? 'Scanning…' : 'Inactive';
+  document.getElementById('btn-go').disabled = active;
+  document.getElementById('btn-st').disabled = active;
+}
+
+function startScanPoll() { stopScanPoll(); scanPoll = setInterval(pollScanData, 2000); }
+function stopScanPoll()  { if(scanPoll){ clearInterval(scanPoll); scanPoll = null; } }
+
+async function pollScanData() {
+  try {
+    const r = await fetch('/api/scan/data');
+    const d = await r.json();
+    document.getElementById('scan-sweep-count').textContent = d.sweep_count || 0;
+    document.getElementById('scan-gain-display').textContent = gainLabel(d.gain);
+    document.getElementById('scan-err-txt').textContent = d.scan_error || '';
+    document.getElementById('scan-status-txt').textContent = d.active ? 'Scanning…' : 'Idle';
+    if (d.sweep && d.sweep.length) lastSweep = d.sweep;
+    if (d.peak_hold && d.peak_hold.length) {
+      spectrumPeakHold = {};
+      d.peak_hold.forEach(([hz, db]) => { spectrumPeakHold[hz] = db; });
+    }
+    if (d.center_hz) lastCenterHz = d.center_hz;
+    if (!d.active) { stopScanPoll(); setScanUI(false); }
+    drawSpectrum(lastSweep, spectrumPeakHold, lastCenterHz);
+  } catch(e) {}
+}
+
+async function doScanStart() {
+  log('Starting spectrum scan — stream will stop…');
+  try {
+    const r = await fetch('/api/scan/start', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) {
+      setScanUI(true); setRun(false); stopPoll(); startScanPoll();
+      // open the panel if collapsed
+      const body = document.getElementById('scan-body');
+      if (body.style.display === 'none') toggleScanPanel();
+      log('Scan started');
+    } else { log('Scan error: ' + d.error); }
+  } catch(e) { log('Scan error: ' + e.message); }
+}
+
+async function doScanStop() {
+  log('Stopping scan…');
+  try { await fetch('/api/scan/stop', {method:'POST'}); } catch(e) {}
+  stopScanPoll(); setScanUI(false);
+  log('Scan stopped. Click "Resume Stream" to restart audio.');
+}
+
+async function doScanResume() {
+  log('Resuming stream…');
+  stopScanPoll();
+  try {
+    const r = await fetch('/api/scan/resume', {method:'POST'});
+    const d = await r.json();
+    if (d.ok) { setScanUI(false); setRun(true); startPoll(); log('Stream resumed'); }
+    else { setScanUI(false); log('Resume error: ' + (d.error||'unknown')); }
+  } catch(e) { setScanUI(false); log('Resume error: ' + e.message); }
+}
+
+async function doScanPeakReset() {
+  try { await fetch('/api/scan/peak_reset', {method:'POST'}); } catch(e) {}
+  spectrumPeakHold = {};
+  drawSpectrum(lastSweep, spectrumPeakHold, lastCenterHz);
+  log('Peak hold cleared');
+}
+
+async function doApplyGainToScan() {
+  const gain = parseInt(document.getElementById('gain').value);
+  try {
+    await fetch('/api/scan/set_gain', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({gain})
+    });
+    log('Scan gain → ' + gainLabel(gain) + ' (takes effect next sweep)');
+  } catch(e) {}
+}
+
+function drawSpectrum(sweep, peakHold, centerHz) {
+  const canvas = document.getElementById('spectrum-canvas');
+  if (!canvas || !sweep || !sweep.length) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const PL = 38, PR = 8, PT = 8, PB = 22;
+  const PW = W - PL - PR, PH = H - PT - PB;
+  const DB_MIN = -80, DB_MAX = -20;
+
+  const hzVals = sweep.map(p => p[0]);
+  const hz_min = Math.min(...hzVals), hz_max = Math.max(...hzVals);
+  if (hz_max === hz_min) return;
+
+  function xHz(hz)  { return PL + ((hz - hz_min) / (hz_max - hz_min)) * PW; }
+  function yDb(db)  { return PT + PH - ((Math.max(DB_MIN, Math.min(DB_MAX, db)) - DB_MIN) / (DB_MAX - DB_MIN)) * PH; }
+
+  // 1. Background
+  ctx.fillStyle = '#050505';
+  ctx.fillRect(0, 0, W, H);
+
+  // 2. Grid
+  ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1;
+  for (let db = DB_MIN; db <= DB_MAX; db += 10) {
+    const y = Math.round(yDb(db)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(PL, y); ctx.lineTo(W - PR, y); ctx.stroke();
+  }
+  const step100k = 100000;
+  const firstGrid = Math.ceil(hz_min / step100k) * step100k;
+  for (let hz = firstGrid; hz <= hz_max; hz += step100k) {
+    const x = Math.round(xHz(hz)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(x, PT); ctx.lineTo(x, H - PB); ctx.stroke();
+  }
+
+  // 3. Peak hold (amber dashed)
+  const peakPts = Object.entries(peakHold)
+    .map(([hz, db]) => [parseInt(hz), db])
+    .filter(([hz]) => hz >= hz_min && hz <= hz_max)
+    .sort((a, b) => a[0] - b[0]);
+  if (peakPts.length > 1) {
+    ctx.strokeStyle = '#ffaa00'; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
+    ctx.beginPath();
+    peakPts.forEach(([hz, db], i) => { i ? ctx.lineTo(xHz(hz), yDb(db)) : ctx.moveTo(xHz(hz), yDb(db)); });
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // 4. Current sweep — fill + outline
+  if (sweep.length > 1) {
+    ctx.beginPath();
+    ctx.moveTo(xHz(sweep[0][0]), H - PB);
+    sweep.forEach(([hz, db]) => ctx.lineTo(xHz(hz), yDb(db)));
+    ctx.lineTo(xHz(sweep[sweep.length-1][0]), H - PB);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(51,255,51,0.12)'; ctx.fill();
+    ctx.beginPath();
+    sweep.forEach(([hz, db], i) => { i ? ctx.lineTo(xHz(hz), yDb(db)) : ctx.moveTo(xHz(hz), yDb(db)); });
+    ctx.strokeStyle = '#33ff33'; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+
+  // 5. Center frequency marker
+  if (centerHz && centerHz >= hz_min && centerHz <= hz_max) {
+    const cx = Math.round(xHz(centerHz)) + 0.5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 1; ctx.setLineDash([4,2]);
+    ctx.beginPath(); ctx.moveTo(cx, PT); ctx.lineTo(cx, H - PB); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.font = '9px JetBrains Mono, monospace'; ctx.textAlign = 'center';
+    ctx.fillText('▼', cx, PT + 9);
+  }
+
+  // 6. Y-axis labels
+  ctx.fillStyle = '#555'; ctx.font = '9px JetBrains Mono, monospace'; ctx.textAlign = 'right';
+  for (let db = DB_MIN; db <= DB_MAX; db += 10) ctx.fillText(db, PL - 3, yDb(db) + 3);
+
+  // 7. X-axis labels (kHz offset from center)
+  ctx.textAlign = 'center';
+  for (let hz = firstGrid; hz <= hz_max; hz += step100k) {
+    const off = Math.round((hz - (centerHz||hz_min)) / 1000);
+    const lbl = off > 0 ? '+'+off : String(off);
+    ctx.fillText(lbl+'k', xHz(hz), H - PB + 11);
+  }
+  ctx.textAlign = 'right'; ctx.fillStyle = '#333';
+  ctx.fillText('kHz', W - PR, H - 2);
+
+  // 8. Y-axis unit
+  ctx.save(); ctx.translate(9, PT + PH/2); ctx.rotate(-Math.PI/2);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#333';
+  ctx.fillText('dBFS', 0, 0); ctx.restore();
+}
+
 async function initState(){
   try {
     const r = await fetch('/api/status');
@@ -423,7 +634,8 @@ async function initState(){
     updateFreqDisplay(t.frequency||'164.750M', t.modulation||'fm', t.gain||40, t.ppm||0);
     renderPresets(t.presets||[]);
     renderSdrStatus(d.sdr_present, d.fast_death_count);
-    if(d.running){ setRun(true); startPoll(); log('Stream already active (auto-started)'); }
+    if(d.scan_active){ setScanUI(true); setRun(false); startScanPoll(); log('Scan already active'); }
+    else if(d.running){ setRun(true); startPoll(); log('Stream already active (auto-started)'); }
   } catch(e){}
 }
 initState();
