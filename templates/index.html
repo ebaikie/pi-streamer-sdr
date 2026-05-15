@@ -106,8 +106,8 @@
         </select>
       </div>
       <div class="cg">
-        <label>Gain (<span id="gain-val">40</span> dB)</label>
-        <input type="range" id="gain" min="0" max="50" step="1" value="40" style="accent-color:var(--green);">
+        <label>Gain (<span id="gain-val">40 dB</span>)</label>
+        <input type="range" id="gain" min="-1" max="50" step="1" value="40" style="accent-color:var(--green);">
       </div>
       <div class="cg">
         <label>PPM Correction</label>
@@ -234,8 +234,10 @@ function log(m) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+function gainLabel(v) { return parseInt(v) === -1 ? 'AGC' : v + ' dB'; }
+
 // Slider labels
-document.getElementById('gain').addEventListener('input', function(){ document.getElementById('gain-val').textContent = this.value; });
+document.getElementById('gain').addEventListener('input', function(){ document.getElementById('gain-val').textContent = gainLabel(this.value); });
 document.getElementById('eq-low-cut').addEventListener('input', function(){ document.getElementById('lc-val').textContent = this.value; });
 document.getElementById('eq-high-cut').addEventListener('input', function(){ document.getElementById('hc-val').textContent = this.value; });
 document.getElementById('eq-speech-boost').addEventListener('input', function(){ document.getElementById('sb-val').textContent = this.value; });
@@ -258,7 +260,7 @@ function updateFreqDisplay(freqRaw, mod, gain, ppm) {
   if (!isNaN(n)) display = (n < 1000 ? n : (n/1e6).toFixed(3)) + ' MHz';
   document.getElementById('freq-display').textContent = display;
   const modLabel = mod === 'fm' ? 'NFM' : mod.toUpperCase();
-  document.getElementById('mod-display').textContent = `${modLabel} • Gain ${gain} dB • PPM ${ppm}`;
+  document.getElementById('mod-display').textContent = `${modLabel} • Gain ${gainLabel(gain)} • PPM ${ppm}`;
 }
 
 function getSettings() {
@@ -300,7 +302,7 @@ async function doStop() {
 
 async function doTune() {
   const s = getSettings();
-  log(`Retuning to ${s.frequency} ${s.modulation.toUpperCase()} gain=${s.gain}...`);
+  log(`Retuning to ${s.frequency} ${s.modulation.toUpperCase()} gain=${gainLabel(s.gain)}...`);
   updateFreqDisplay(s.frequency, s.modulation, s.gain, s.ppm);
   try {
     const r = await fetch('/api/tune',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)});
@@ -333,7 +335,7 @@ async function deletePreset(label) {
 async function tunePreset(freq, mod) {
   document.getElementById('frequency').value = String(freq).replace('M','');
   document.getElementById('modulation').value = mod || 'fm';
-  document.getElementById('gain-val').textContent = document.getElementById('gain').value;
+  document.getElementById('gain-val').textContent = gainLabel(document.getElementById('gain').value);
   await doTune();
 }
 
@@ -408,7 +410,7 @@ async function initState(){
     const t = d.tuning || {};
     if(t.frequency){ const f=String(t.frequency).replace('M',''); document.getElementById('frequency').value=f; }
     if(t.modulation) document.getElementById('modulation').value=t.modulation;
-    if(t.gain!==undefined){ document.getElementById('gain').value=t.gain; document.getElementById('gain-val').textContent=t.gain; }
+    if(t.gain!==undefined){ document.getElementById('gain').value=t.gain; document.getElementById('gain-val').textContent=gainLabel(t.gain); }
     if(t.ppm!==undefined) document.getElementById('ppm').value=t.ppm;
     if(t.bitrate) document.getElementById('bitrate').value=t.bitrate;
     if(t.gate_threshold!==undefined){ document.getElementById('gate-threshold').value=t.gate_threshold; document.getElementById('gate-val').textContent=t.gate_threshold; }

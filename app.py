@@ -71,15 +71,18 @@ def load_tuning():
         print(f"[STREAM] Failed to load tuning: {e}", flush=True)
 
 def build_rtl_fm_args():
-    return [
+    gain = tuning.get("gain", int(RTL_GAIN))
+    args = [
         "rtl_fm",
         "-f", str(tuning.get("frequency", RTL_FREQUENCY)),
         "-M", str(tuning.get("modulation", RTL_MODULATION)),
         "-s", str(RTL_SAMPLE_RATE),
         "-l", str(tuning.get("rtl_squelch", 0)),  # 0=off; silence_inject.py keeps stream alive when squelch > 0
-        "-g", str(tuning.get("gain", int(RTL_GAIN))),
         "-p", str(tuning.get("ppm", int(RTL_PPM))),
     ]
+    if gain != -1:  # -1 = AGC (omit -g flag)
+        args += ["-g", str(gain)]
+    return args
 
 def build_sox_filter_args():
     thresh = int(tuning.get("gate_threshold", 3))
