@@ -281,7 +281,7 @@ def monitor_loop():
     decay = 0.9
     restart_count = 0
     mount_missing_count = 0
-    MOUNT_MISSING_THRESHOLD = 300  # Icecast source-timeout=0 keeps mount alive; this is last-resort only
+    MOUNT_MISSING_THRESHOLD = 20  # seconds before treating a missing Icecast mount as a hung pipeline
     heartbeat_counter = 0
 
     while state["running"]:
@@ -333,8 +333,8 @@ def monitor_loop():
         state["peak_level"] = 0
         print(f"[STREAM] {reason}", flush=True)
 
-        # Back off up to 60s after many failures — never give up permanently
-        delay = min(60, 3 + (restart_count - 1) * 2)
+        # Back off up to 30s after many failures — never give up permanently
+        delay = min(30, 3 + (restart_count - 1) * 2)
         print(f"[STREAM] Auto-restart #{restart_count} in {delay}s...", flush=True)
         state["error"] = f"Restarting (#{restart_count})..."
         state["running"] = False
