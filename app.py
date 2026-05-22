@@ -20,6 +20,9 @@ from urllib.request import urlopen
 
 app = Flask(__name__)
 
+USB_HUB  = "1-1"
+USB_PORT = "5"
+
 RTL_FREQUENCY   = os.environ.get("RTL_FREQUENCY", "164.750M")
 RTL_MODULATION  = os.environ.get("RTL_MODULATION", "fm")
 RTL_GAIN        = os.environ.get("RTL_GAIN", "40")
@@ -354,6 +357,19 @@ def monitor_loop():
     state["signal_level"] = 0
     state["peak_level"] = 0
 
+def usb_dongle_off():
+    subprocess.run(["uhubctl", "-l", USB_HUB, "-p", USB_PORT, "-a", "off"], capture_output=True)
+    time.sleep(2)
+
+def usb_dongle_on():
+    subprocess.run(["uhubctl", "-l", USB_HUB, "-p", USB_PORT, "-a", "on"], capture_output=True)
+    time.sleep(3)  # allow USB enumeration
+
+def usb_dongle_cycle():
+    print("[STREAM] USB power cycling SDR dongle...", flush=True)
+    usb_dongle_off()
+    usb_dongle_on()
+
 def kill_existing():
     subprocess.run(["pkill", "-9", "rtl_fm"],          capture_output=True)
     subprocess.run(["pkill", "-9", "sox"],             capture_output=True)
@@ -384,6 +400,11 @@ def start_pipeline():
         state["signal_level"] = 0
         state["peak_level"] = 0
         kill_existing()
+
+        if state["fast_death_count"] >= 3:
+            usb_dongle_cycle()
+        else:
+            usb_dongle_on()
 
         shell_cmd = build_shell_command()
         state["last_cmd"] = shell_cmd
@@ -570,6 +591,8 @@ if __name__ == "__main__":
           f"gain={tuning['gain']} ppm={tuning['ppm']}", flush=True)
 
     def auto_start():
+        usb_dongle_off()
+        print("[STREAM] USB SDR port powered off (boot init)", flush=True)
         for attempt in range(15):
             try:
                 with socket.create_connection((ICECAST_HOST, ICECAST_PORT), timeout=2):
