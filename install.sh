@@ -60,7 +60,8 @@ apt-get install -y \
     python3 \
     python3-flask \
     curl \
-    jq
+    jq \
+    uhubctl
 
 info "Packages installed."
 
