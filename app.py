@@ -311,7 +311,7 @@ def monitor_loop():
         if proc_dead:
             now = time.time()
             state["death_timestamps"].append(now)
-            state["death_timestamps"] = [t for t in state["death_timestamps"] if now - t < 60]
+            state["death_timestamps"] = [t for t in state["death_timestamps"] if now - t < 120]
             state["fast_death_count"] = len(state["death_timestamps"])
             if state["fast_death_count"] >= 3:
                 print(f"[STREAM] WARNING: SDR may be disconnected "
