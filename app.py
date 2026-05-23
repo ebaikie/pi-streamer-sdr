@@ -329,6 +329,11 @@ def monitor_loop():
             reason = f"Icecast mount missing for {mount_missing_count}s"
 
         if not needs_restart:
+            # Reset fast_death_count after 5 min of stable uptime
+            elapsed = time.time() - (state["proc_start_time"] or time.time())
+            if elapsed > 300 and state["fast_death_count"] > 0:
+                state["fast_death_count"] = 0
+                state["death_timestamps"] = []
             continue
 
         restart_count += 1
@@ -359,7 +364,7 @@ def monitor_loop():
 
 def usb_dongle_off():
     subprocess.run(["uhubctl", "-l", USB_HUB, "-p", USB_PORT, "-a", "off"], capture_output=True)
-    time.sleep(2)
+    time.sleep(10)  # longer off-time lets the dongle cool slightly
 
 def usb_dongle_on():
     subprocess.run(["uhubctl", "-l", USB_HUB, "-p", USB_PORT, "-a", "on"], capture_output=True)
