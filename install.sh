@@ -241,6 +241,7 @@ SyslogIdentifier=pi-streamer
 
 KillMode=control-group
 TimeoutStopSec=5
+CPUQuota=200%
 
 NoNewPrivileges=true
 ProtectSystem=strict
