@@ -40,6 +40,7 @@ state = {
     "running": False, "proc": None, "monitor_thread": None,
     "signal_level": 0.0, "peak_level": 0.0, "error": None, "last_cmd": "",
     "sdr_present": None, "fast_death_count": 0, "proc_start_time": None,
+    "death_timestamps": [],
 }
 
 tuning = {
@@ -308,14 +309,13 @@ def monitor_loop():
         needs_restart = False
         reason = ""
         if proc_dead:
-            elapsed = time.time() - (state["proc_start_time"] or 0)
-            if elapsed < 5:
-                state["fast_death_count"] += 1
-                if state["fast_death_count"] >= 3:
-                    print(f"[STREAM] WARNING: SDR may be disconnected "
-                          f"({state['fast_death_count']} rapid exits)", flush=True)
-            else:
-                state["fast_death_count"] = 0
+            now = time.time()
+            state["death_timestamps"].append(now)
+            state["death_timestamps"] = [t for t in state["death_timestamps"] if now - t < 60]
+            state["fast_death_count"] = len(state["death_timestamps"])
+            if state["fast_death_count"] >= 3:
+                print(f"[STREAM] WARNING: SDR may be disconnected "
+                      f"({state['fast_death_count']} rapid exits in 60s)", flush=True)
             needs_restart = True
             err = ""
             try:
@@ -434,6 +434,7 @@ def _stop_pipeline_locked():
     """Stop pipeline without acquiring pipeline_lock (caller must hold it)."""
     state["running"] = False
     state["fast_death_count"] = 0
+    state["death_timestamps"] = []
     if state["proc"]:
         try:
             state["proc"].kill()
