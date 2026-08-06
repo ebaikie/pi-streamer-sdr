@@ -44,7 +44,7 @@ state = {
     "running": False, "proc": None, "monitor_thread": None,
     "signal_level": 0.0, "peak_level": 0.0, "error": None, "last_cmd": "",
     "sdr_present": None, "fast_death_count": 0, "proc_start_time": None,
-    "death_timestamps": [],
+    "death_timestamps": [], "monitor_generation": 0,
 }
 
 tuning = {
@@ -288,7 +288,12 @@ def sdr_check_loop():
         state["sdr_present"] = check_sdr_present()
         time.sleep(2)
 
-def monitor_loop():
+def monitor_loop(my_generation):
+    """my_generation pins this thread to the start_pipeline() call that spawned it.
+    If a different thread's restart succeeds in the meantime, start_pipeline() bumps
+    state["monitor_generation"] — this thread notices and exits instead of looping
+    forever, which is what used to happen on every failed/raced restart attempt and
+    left orphaned watchdog threads running (and racing each other) indefinitely."""
     decay = 0.9
     restart_count = 0
     mount_missing_count = 0
@@ -297,6 +302,9 @@ def monitor_loop():
     sdr_was_present = state["sdr_present"]
 
     while state["running"]:
+        if state["monitor_generation"] != my_generation:
+            print("[STREAM] Superseded by a newer monitor thread, exiting", flush=True)
+            return
         time.sleep(1)
         heartbeat_counter += 1
         if heartbeat_counter % 300 == 0:
@@ -450,7 +458,8 @@ def start_pipeline():
             state["proc"] = proc
             state["running"] = True
             state["proc_start_time"] = time.time()
-            t = threading.Thread(target=monitor_loop, daemon=True)
+            state["monitor_generation"] += 1
+            t = threading.Thread(target=monitor_loop, args=(state["monitor_generation"],), daemon=True)
             t.start()
             state["monitor_thread"] = t
             return {"ok": True, "cmd": shell_cmd}
