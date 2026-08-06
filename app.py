@@ -11,6 +11,7 @@ silence without stopping the stream. pv buffers brief upstream stalls.
 import json as jsonlib
 import os
 import random
+import re
 import subprocess
 import threading
 import time
@@ -22,6 +23,9 @@ app = Flask(__name__)
 
 USB_HUB  = "1-1"
 USB_PORT = "5"
+
+FAN_CONF_PATH = "/opt/pi-fan/pi-fan.conf"
+FAN_ENABLED_KEYS = {"intake": "FAN_INTAKE_ENABLED", "exhaust": "FAN_EXHAUST_ENABLED", "heatsink": "FAN_HEATSINK_ENABLED"}
 
 RTL_FREQUENCY   = os.environ.get("RTL_FREQUENCY", "164.750M")
 RTL_MODULATION  = os.environ.get("RTL_MODULATION", "fm")
@@ -277,9 +281,12 @@ def check_sdr_present():
         return None
 
 def sdr_check_loop():
+    # 2s poll (was 10s) — this signal now drives faster restart reaction in
+    # monitor_loop, not just the UI dot, so tighter polling directly cuts
+    # listener-facing downtime per USB drop. lsusb is cheap (<100ms).
     while True:
         state["sdr_present"] = check_sdr_present()
-        time.sleep(10)
+        time.sleep(2)
 
 def monitor_loop():
     decay = 0.9
@@ -287,6 +294,7 @@ def monitor_loop():
     mount_missing_count = 0
     MOUNT_MISSING_THRESHOLD = 20  # seconds before treating a missing Icecast mount as a hung pipeline
     heartbeat_counter = 0
+    sdr_was_present = state["sdr_present"]
 
     while state["running"]:
         time.sleep(1)
@@ -306,6 +314,18 @@ def monitor_loop():
         state["signal_level"] = round(level, 1)
         state["peak_level"] = max(level, state["peak_level"] * decay)
 
+        # The RTL-SDR dongle physically drops off USB periodically (confirmed
+        # via dmesg — happens even with this app fully stopped, so it's a
+        # hardware/power issue, not something restart logic causes). It
+        # re-enumerates in ~10-11s, but previously the watchdog only noticed
+        # via the 20s mount-missing timer, adding ~10-20s of pure waiting
+        # on top of a device that was already back. React on the actual
+        # reconnect edge instead, while still keeping the mount-missing
+        # timer as a fallback for anything this doesn't catch.
+        sdr_now_present = state["sdr_present"]
+        sdr_reconnected = (sdr_was_present is False and sdr_now_present is True)
+        sdr_was_present = sdr_now_present
+
         needs_restart = False
         reason = ""
         if proc_dead:
@@ -324,6 +344,9 @@ def monitor_loop():
             except Exception:
                 pass
             reason = f"Process exited: {err}" if err else "Process exited"
+        elif sdr_reconnected and mount_missing_count > 0:
+            needs_restart = True
+            reason = f"SDR reconnected after drop (mount missing {mount_missing_count}s) — restarting immediately instead of waiting out the timer"
         elif mount_missing_count >= MOUNT_MISSING_THRESHOLD:
             needs_restart = True
             reason = f"Icecast mount missing for {mount_missing_count}s"
@@ -458,9 +481,62 @@ def stop_pipeline():
         _stop_pipeline_locked()
         return {"ok": True}
 
+def read_fan_state():
+    """Read intake/exhaust on/off from pi-fan's own config — the source of truth
+    fan_control.py itself reads at startup. Returns None if pi-fan isn't installed."""
+    try:
+        text = open(FAN_CONF_PATH).read()
+    except FileNotFoundError:
+        return None
+    state = {}
+    for name, key in FAN_ENABLED_KEYS.items():
+        m = re.search(rf'^{key}=(\d)', text, re.M)
+        state[name] = 100 if (m and m.group(1) == "1") else 0
+    return state
+
+def write_fan_enabled(fan, on):
+    text = open(FAN_CONF_PATH).read()
+    key = FAN_ENABLED_KEYS[fan]
+    new_text = re.sub(rf'^{key}=\d', f'{key}={"1" if on else "0"}', text, flags=re.M)
+    with open(FAN_CONF_PATH, "w") as f:
+        f.write(new_text)
+
 @app.route("/")
 def index():
     return render_template("index.html")
+
+@app.route("/api/fan/status")
+def api_fan_status():
+    state = read_fan_state()
+    if state is None:
+        return jsonify({"ok": False, "error": "pi-fan not installed"})
+    try:
+        r = subprocess.run(["systemctl", "is-active", "pi-fan"], capture_output=True, text=True, timeout=3)
+        active = r.stdout.strip() == "active"
+    except Exception:
+        active = False
+    if not active:
+        return jsonify({"ok": False, "error": "pi-fan service not active"})
+    return jsonify({"ok": True, **state})
+
+@app.route("/api/fan/set", methods=["POST"])
+def api_fan_set():
+    data = request.get_json(silent=True) or {}
+    fan = data.get("fan")
+    if fan not in FAN_ENABLED_KEYS:
+        return jsonify({"ok": False, "error": "fan must be intake or exhaust"}), 400
+    try:
+        value = int(data.get("value"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "value must be a number"}), 400
+    try:
+        write_fan_enabled(fan, value > 0)
+        r = subprocess.run(["systemctl", "restart", "pi-fan"], capture_output=True, text=True, timeout=10)
+        if r.returncode != 0:
+            return jsonify({"ok": False, "error": f"restart failed: {r.stderr.strip()}"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+    return jsonify({"ok": True, "fan": fan, "on": value > 0})
 
 @app.route("/api/start", methods=["POST"])
 def api_start():

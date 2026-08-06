@@ -1,0 +1,35 @@
+[Unit]
+Description=pi-fan — intake/exhaust cooling fans, on/off via GPIO (MOSFETs)
+After=local-fs.target
+# Every web-UI/API toggle does a full `systemctl restart` (see ../app.py's
+# /api/fan/set) — a few quick clicks in a row is normal use, not a crash
+# loop, so don't let systemd's default restart rate limit lock the service
+# out with start-limit-hit. (Hit this for real during testing: several
+# rapid restarts tripped the default 5-in-10s limit.)
+StartLimitIntervalSec=0
+
+[Service]
+# Type=simple, not oneshot: the GPIO chardev API (gpiozero/lgpio) releases
+# a line when the requesting process exits, so this has to stay running
+# and holding the lines open. See fan_control.py's docstring.
+Type=simple
+EnvironmentFile=/opt/pi-fan/pi-fan.conf
+ExecStart=/usr/bin/python3 /opt/pi-fan/fan_control.py
+WorkingDirectory=/opt/pi-fan
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pi-fan
+
+# /dev/gpiochip0 is root:gpio, group-writable — the `pi` user is already
+# in the `gpio` group, so this doesn't need root.
+User=pi
+Group=gpio
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/pi-fan
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

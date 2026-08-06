@@ -245,7 +245,7 @@ CPUQuota=200%
 
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=${INSTALL_DIR}
+ReadWritePaths=${INSTALL_DIR} -/opt/pi-fan
 PrivateTmp=true
 
 [Install]
