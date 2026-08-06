@@ -96,6 +96,19 @@
   .cg input[type="range"] { padding:0; accent-color:var(--accent); background:transparent; border:none; }
   .cg-desc { font-size:.62rem; color:var(--text-faint); font-weight:500; line-height:1.4; margin-top:.35rem; }
 
+  /* Dual-handle band-pass slider — two overlapping native range inputs;
+     each input's own track is invisible, only its thumb is interactive
+     (pointer-events re-enabled on the thumb pseudo-element), so dragging
+     never fights between the two handles. */
+  .dual-slider { position:relative; height:22px; }
+  .dual-slider-track { position:absolute; top:50%; left:0; right:0; height:4px; margin-top:-2px; background:var(--input-bg); border:1.5px solid var(--border); border-radius:3px; }
+  .dual-slider-range { position:absolute; top:50%; height:4px; margin-top:-2px; background:var(--accent-grad); border-radius:3px; }
+  .dual-slider-input { position:absolute; top:0; left:0; width:100%; height:22px; margin:0; padding:0; background:transparent; pointer-events:none; -webkit-appearance:none; appearance:none; }
+  .dual-slider-input::-webkit-slider-runnable-track { background:transparent; height:22px; }
+  .dual-slider-input::-moz-range-track { background:transparent; height:22px; border:none; }
+  .dual-slider-input::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; pointer-events:auto; width:16px; height:16px; margin-top:3px; border-radius:50%; background:var(--accent); border:2px solid var(--panel-bg); box-shadow:0 1px 4px rgba(0,0,0,.3); cursor:pointer; }
+  .dual-slider-input::-moz-range-thumb { pointer-events:auto; width:16px; height:16px; border-radius:50%; background:var(--accent); border:2px solid var(--panel-bg); box-shadow:0 1px 4px rgba(0,0,0,.3); cursor:pointer; }
+
   /* Freq display */
   .freq-display { font-family:'JetBrains Mono',monospace; text-align:center; font-size:1.7rem; font-weight:700; letter-spacing:.05rem; color:var(--accent); padding:.25rem 0; }
   .freq-sub { text-align:center; font-size:.7rem; color:var(--text-dim); margin-bottom:.75rem; font-weight:600; }
@@ -287,15 +300,15 @@
   <div class="panel">
     <div class="panel-title">Audio EQ &amp; Filter</div>
     <div class="controls">
-      <div class="cg">
-        <label>Low Cut (<span id="lc-val">300</span> Hz)</label>
-        <input type="range" id="eq-low-cut" min="0" max="500" step="50" value="300">
-        <div class="cg-desc">Highpass — cuts everything below this. Removes hum/rumble. Voice starts around 300Hz, so stay under that.</div>
-      </div>
-      <div class="cg">
-        <label>High Cut (<span id="hc-val">3500</span> Hz)</label>
-        <input type="range" id="eq-high-cut" min="2000" max="11000" step="500" value="3500">
-        <div class="cg-desc">Lowpass — cuts everything above this. Removes hiss/static. Voice tops out around 3kHz, so stay above that.</div>
+      <div class="cg wide">
+        <label>Band-pass (<span id="lc-val">300</span>&ndash;<span id="hc-val">3500</span> Hz)</label>
+        <div class="dual-slider">
+          <div class="dual-slider-track"></div>
+          <div class="dual-slider-range" id="bp-range"></div>
+          <input type="range" id="eq-low-cut" class="dual-slider-input" min="0" max="11000" step="50" value="300">
+          <input type="range" id="eq-high-cut" class="dual-slider-input" min="0" max="11000" step="50" value="3500">
+        </div>
+        <div class="cg-desc">Keeps everything between the two handles, cuts everything outside. Voice sits roughly 300Hz&ndash;3kHz — drag the low handle up to remove hum/rumble, the high handle down to remove hiss/static, without cutting into speech itself.</div>
       </div>
       <div class="cg">
         <label>Speech Boost (<span id="sb-val">3</span> dB)</label>
@@ -366,8 +379,32 @@ function gainLabel(v) { return parseInt(v) === -1 ? 'AGC' : v + ' dB'; }
 
 // Slider labels
 document.getElementById('gain').addEventListener('input', function(){ document.getElementById('gain-val').textContent = gainLabel(this.value); });
-document.getElementById('eq-low-cut').addEventListener('input', function(){ document.getElementById('lc-val').textContent = this.value; });
-document.getElementById('eq-high-cut').addEventListener('input', function(){ document.getElementById('hc-val').textContent = this.value; });
+// Band-pass dual-handle slider — two overlapping range inputs on a shared
+// 0-11000Hz axis. Keeps them from crossing, and paints the highlighted
+// span between them to show the passband.
+const BP_MIN = 0, BP_MAX = 11000;
+function updateBandpassRange() {
+  const lowEl = document.getElementById('eq-low-cut'), highEl = document.getElementById('eq-high-cut');
+  const lowV = parseInt(lowEl.value), highV = parseInt(highEl.value);
+  const lowPct = (lowV - BP_MIN) / (BP_MAX - BP_MIN) * 100;
+  const highPct = (highV - BP_MIN) / (BP_MAX - BP_MIN) * 100;
+  const rangeEl = document.getElementById('bp-range');
+  rangeEl.style.left = lowPct + '%';
+  rangeEl.style.width = Math.max(0, highPct - lowPct) + '%';
+  document.getElementById('lc-val').textContent = lowV;
+  document.getElementById('hc-val').textContent = highV;
+}
+document.getElementById('eq-low-cut').addEventListener('input', function(){
+  const high = parseInt(document.getElementById('eq-high-cut').value);
+  if (parseInt(this.value) > high) this.value = high;
+  updateBandpassRange();
+});
+document.getElementById('eq-high-cut').addEventListener('input', function(){
+  const low = parseInt(document.getElementById('eq-low-cut').value);
+  if (parseInt(this.value) < low) this.value = low;
+  updateBandpassRange();
+});
+updateBandpassRange(); // initial paint from the HTML's default values, before any data loads
 document.getElementById('eq-speech-boost').addEventListener('input', function(){ document.getElementById('sb-val').textContent = this.value; });
 document.getElementById('gate-threshold').addEventListener('input', function(){ document.getElementById('gate-val').textContent = this.value; });
 document.getElementById('vol-boost').addEventListener('input', function(){ document.getElementById('vb-val').textContent = this.value; });
@@ -470,8 +507,9 @@ async function tunePreset(idx) {
   if(p.bitrate) document.getElementById('bitrate').value=p.bitrate;
   if(p.rtl_squelch!==undefined){ document.getElementById('rtl-squelch').value=p.rtl_squelch; document.getElementById('rsq-val').textContent=p.rtl_squelch===0?'off':p.rtl_squelch; }
   if(p.noise_level!==undefined){ document.getElementById('noise-level').value=p.noise_level; document.getElementById('nl-val').textContent=(p.noise_level/10).toFixed(1); }
-  if(p.eq_low_cut!==undefined){ document.getElementById('eq-low-cut').value=p.eq_low_cut; document.getElementById('lc-val').textContent=p.eq_low_cut; }
-  if(p.eq_high_cut!==undefined){ document.getElementById('eq-high-cut').value=p.eq_high_cut; document.getElementById('hc-val').textContent=p.eq_high_cut; }
+  if(p.eq_low_cut!==undefined) document.getElementById('eq-low-cut').value=p.eq_low_cut;
+  if(p.eq_high_cut!==undefined) document.getElementById('eq-high-cut').value=p.eq_high_cut;
+  updateBandpassRange();
   if(p.eq_speech_boost!==undefined){ document.getElementById('eq-speech-boost').value=p.eq_speech_boost; document.getElementById('sb-val').textContent=p.eq_speech_boost; }
   if(p.gate_threshold!==undefined){ document.getElementById('gate-threshold').value=p.gate_threshold; document.getElementById('gate-val').textContent=p.gate_threshold; }
   if(p.vol_boost!==undefined){ document.getElementById('vol-boost').value=p.vol_boost; document.getElementById('vb-val').textContent=p.vol_boost; }
@@ -796,8 +834,9 @@ async function initState(){
     if(t.bitrate) document.getElementById('bitrate').value=t.bitrate;
     if(t.gate_threshold!==undefined){ document.getElementById('gate-threshold').value=t.gate_threshold; document.getElementById('gate-val').textContent=t.gate_threshold; }
     if(t.vol_boost!==undefined){ document.getElementById('vol-boost').value=t.vol_boost; document.getElementById('vb-val').textContent=t.vol_boost; }
-    if(t.eq_low_cut!==undefined){ document.getElementById('eq-low-cut').value=t.eq_low_cut; document.getElementById('lc-val').textContent=t.eq_low_cut; }
-    if(t.eq_high_cut!==undefined){ document.getElementById('eq-high-cut').value=t.eq_high_cut; document.getElementById('hc-val').textContent=t.eq_high_cut; }
+    if(t.eq_low_cut!==undefined) document.getElementById('eq-low-cut').value=t.eq_low_cut;
+    if(t.eq_high_cut!==undefined) document.getElementById('eq-high-cut').value=t.eq_high_cut;
+    updateBandpassRange();
     if(t.eq_speech_boost!==undefined){ document.getElementById('eq-speech-boost').value=t.eq_speech_boost; document.getElementById('sb-val').textContent=t.eq_speech_boost; }
     if(t.rtl_squelch!==undefined){ document.getElementById('rtl-squelch').value=t.rtl_squelch; document.getElementById('rsq-val').textContent=t.rtl_squelch===0?'off':t.rtl_squelch; }
     if(t.noise_level!==undefined){ document.getElementById('noise-level').value=t.noise_level; document.getElementById('nl-val').textContent=(t.noise_level/10).toFixed(1); }
