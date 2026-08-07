@@ -255,6 +255,32 @@
     <div class="err-text" id="fan-err-txt"></div>
   </div>
 
+  <!-- System Status -->
+  <div class="panel" id="sys-panel">
+    <div class="panel-title">System Status</div>
+    <div class="fan-row">
+      <span class="fan-name">&#9889; Power</span>
+      <span class="status"><span class="dot" id="sys-power-dot"></span><span id="sys-power-txt" class="muted-text">checking&hellip;</span></span>
+    </div>
+    <div class="fan-row">
+      <span class="fan-name">&#127777;&#65039; Temperature</span>
+      <span id="sys-temp-txt" class="muted-text">&mdash;</span>
+    </div>
+    <div class="fan-row">
+      <span class="fan-name">&#128202; CPU Load</span>
+      <span id="sys-load-txt" class="muted-text">&mdash;</span>
+    </div>
+    <div class="fan-row">
+      <span class="fan-name">&#129513; RAM</span>
+      <span id="sys-mem-txt" class="muted-text">&mdash;</span>
+    </div>
+    <div class="fan-row">
+      <span class="fan-name">&#128190; Disk</span>
+      <span id="sys-disk-txt" class="muted-text">&mdash;</span>
+    </div>
+    <div class="err-text" id="sys-err-txt"></div>
+  </div>
+
   <!-- Spectrum Scanner -->
   <div class="panel" id="scan-panel">
     <div class="panel-title" style="cursor:pointer;user-select:none;" onclick="toggleScanPanel()">
@@ -618,6 +644,36 @@ async function pollFanStatus() {
   }
 }
 
+// --- System Status ---
+
+async function pollSystemStatus() {
+  try {
+    const r = await fetch('/api/system/status');
+    const d = await r.json();
+    if (!d.ok) { document.getElementById('sys-err-txt').textContent = 'System status unavailable'; return; }
+    document.getElementById('sys-err-txt').textContent = '';
+
+    const dot = document.getElementById('sys-power-dot');
+    const txt = document.getElementById('sys-power-txt');
+    let powerLabel, powerClass;
+    if (d.under_voltage_now) { powerLabel = 'Under-voltage NOW'; powerClass = 'err'; }
+    else if (d.throttled_now) { powerLabel = 'Throttled NOW'; powerClass = 'err'; }
+    else if (d.under_voltage_occurred) { powerLabel = 'Under-voltage occurred since boot'; powerClass = 'err'; }
+    else if (d.throttled_occurred || d.freq_capped_occurred || d.temp_limit_occurred) { powerLabel = 'Throttling occurred since boot'; powerClass = 'err'; }
+    else { powerLabel = 'OK'; powerClass = 'on'; }
+    dot.className = 'dot ' + powerClass;
+    txt.textContent = powerLabel;
+    txt.style.color = powerClass === 'err' ? 'var(--bad)' : 'var(--good)';
+
+    document.getElementById('sys-temp-txt').textContent = d.temp_c !== undefined ? d.temp_c.toFixed(1) + '°C' : '—';
+    document.getElementById('sys-load-txt').textContent = d.load_1 !== undefined ? `${d.load_1} / ${d.load_5} / ${d.load_15}` : '—';
+    document.getElementById('sys-mem-txt').textContent = d.mem_used_mb !== undefined ? `${d.mem_used_mb} / ${d.mem_total_mb} MB (${d.mem_percent}%)` : '—';
+    document.getElementById('sys-disk-txt').textContent = d.disk_used_gb !== undefined ? `${d.disk_used_gb} / ${d.disk_total_gb} GB (${d.disk_percent}%)` : '—';
+  } catch(e) {
+    document.getElementById('sys-err-txt').textContent = 'System status unavailable';
+  }
+}
+
 // --- Spectrum Scanner ---
 
 function toggleScanPanel() {
@@ -848,6 +904,8 @@ async function initState(){
   } catch(e){}
   pollFanStatus();
   setInterval(pollFanStatus, 5000);
+  pollSystemStatus();
+  setInterval(pollSystemStatus, 5000);
 }
 initState();
 </script>

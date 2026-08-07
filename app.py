@@ -12,6 +12,7 @@ import json as jsonlib
 import os
 import random
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -546,6 +547,71 @@ def api_fan_set():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
     return jsonify({"ok": True, "fan": fan, "on": value > 0})
+
+# vcgencmd get_throttled bit meanings:
+# https://www.raspberrypi.com/documentation/computers/os.html#get_throttled
+THROTTLED_BITS = {
+    "under_voltage_now": 0x1, "freq_capped_now": 0x2,
+    "throttled_now": 0x4, "temp_limit_now": 0x8,
+    "under_voltage_occurred": 0x10000, "freq_capped_occurred": 0x20000,
+    "throttled_occurred": 0x40000, "temp_limit_occurred": 0x80000,
+}
+
+def get_system_status():
+    result = {"ok": True}
+
+    try:
+        r = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=3)
+        raw = r.stdout.strip().split("=")[1]  # "throttled=0x50000" -> "0x50000"
+        mask = int(raw, 16)
+        result["throttled_raw"] = raw
+        for name, bit in THROTTLED_BITS.items():
+            result[name] = bool(mask & bit)
+    except Exception as e:
+        result["throttled_error"] = str(e)
+
+    try:
+        r = subprocess.run(["vcgencmd", "measure_temp"], capture_output=True, text=True, timeout=3)
+        result["temp_c"] = float(r.stdout.strip().split("=")[1].rstrip("'C"))
+    except Exception as e:
+        result["temp_error"] = str(e)
+
+    try:
+        total, used, _ = shutil.disk_usage("/")
+        result["disk_total_gb"] = round(total / 1e9, 1)
+        result["disk_used_gb"] = round(used / 1e9, 1)
+        result["disk_percent"] = round(used / total * 100, 1)
+    except Exception as e:
+        result["disk_error"] = str(e)
+
+    try:
+        meminfo = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                k, v = line.split(":", 1)
+                meminfo[k] = int(v.strip().split()[0])  # kB
+        mem_total, mem_available = meminfo.get("MemTotal", 0), meminfo.get("MemAvailable", 0)
+        mem_used = mem_total - mem_available
+        result["mem_total_mb"] = round(mem_total / 1024)
+        result["mem_used_mb"] = round(mem_used / 1024)
+        result["mem_percent"] = round(mem_used / mem_total * 100, 1) if mem_total else 0
+        swap_total, swap_free = meminfo.get("SwapTotal", 0), meminfo.get("SwapFree", 0)
+        result["swap_total_mb"] = round(swap_total / 1024)
+        result["swap_used_mb"] = round((swap_total - swap_free) / 1024)
+    except Exception as e:
+        result["mem_error"] = str(e)
+
+    try:
+        load1, load5, load15 = os.getloadavg()
+        result["load_1"], result["load_5"], result["load_15"] = round(load1, 2), round(load5, 2), round(load15, 2)
+    except Exception as e:
+        result["load_error"] = str(e)
+
+    return result
+
+@app.route("/api/system/status")
+def api_system_status():
+    return jsonify(get_system_status())
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
