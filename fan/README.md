@@ -187,7 +187,7 @@ Eli reconnected the SDR live and it became time-sensitive. Two separate
 causes: a genuine USB power drop on the dongle (confirmed independent of
 the app — still relevant to the PSU theory above) plus a misconfigured
 `rtl_squelch`/`gate_threshold` that was the actual dominant cause of the
-tight cadence, fixed live. Full writeup in `~/tv/claude-notes/pi-streamer-sdr.md`'s
+tight cadence, fixed live. Full writeup in `~/Apps/homelab-HQ/claude-notes/pi-streamer-sdr.md`'s
 "~30s Restart-Cadence" section.
 
 **Note:** the 2026-08-05 GPIO rewire (final: intake → BCM17, exhaust →
